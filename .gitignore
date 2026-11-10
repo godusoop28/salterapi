@@ -1,0 +1,13 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+.env
+.env.*
+!.env.example
+*.log
+.idea/
+*.iml
+.vscode/
+.DS_Store
+backups/
+*.dump
+*.sql.gz

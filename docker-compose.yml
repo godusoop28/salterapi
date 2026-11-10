@@ -1,0 +1,39 @@
+# Entorno local completo: PostgreSQL + API.
+# Uso: copia .env.example a .env, completa los valores y ejecuta `docker compose up --build`.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: salter
+      POSTGRES_USER: salter
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Define DATABASE_PASSWORD en .env}
+    ports:
+      - "5433:5432"
+    volumes:
+      - salter-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salter -d salter"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      DATABASE_URL: jdbc:postgresql://db:5432/salter
+      DATABASE_USERNAME: salter
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      SALTER_JWT_SECRET: ${SALTER_JWT_SECRET:?Define SALTER_JWT_SECRET en .env}
+      SALTER_CORS_ORIGINS: ${SALTER_CORS_ORIGINS:-http://localhost:3000}
+      SALTER_COOKIE_SECURE: ${SALTER_COOKIE_SECURE:-false}
+      SALTER_BOOTSTRAP_ADMIN_EMAIL: ${SALTER_BOOTSTRAP_ADMIN_EMAIL:-}
+      SALTER_BOOTSTRAP_ADMIN_PASSWORD: ${SALTER_BOOTSTRAP_ADMIN_PASSWORD:-}
+      SALTER_DEV_PASSWORD: ${SALTER_DEV_PASSWORD:-}
+    ports:
+      - "8080:8080"
+
+volumes:
+  salter-db:

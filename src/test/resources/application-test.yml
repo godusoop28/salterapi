@@ -1,0 +1,10 @@
+salter:
+  security:
+    jwt-secret: test-secret-solo-para-pruebas-automatizadas-0123456789
+  bootstrap:
+    admin-email: admin@test.local
+    admin-password: AdminPrueba2026
+logging:
+  level:
+    mx.salter: WARN
+    org.hibernate.SQL: WARN
