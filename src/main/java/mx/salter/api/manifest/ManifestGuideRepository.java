@@ -18,4 +18,8 @@ public interface ManifestGuideRepository extends JpaRepository<ManifestGuide, Ma
 
     @Query("select count(mg) from ManifestGuide mg where mg.manifest.id = :manifestId")
     long countByManifest(@Param("manifestId") Long manifestId);
+
+    /** Conteo de guías de varios manifiestos en una sola consulta (evita N+1 en listados). */
+    @Query("select mg.manifest.id, count(mg) from ManifestGuide mg where mg.manifest.id in :ids group by mg.manifest.id")
+    List<Object[]> countByManifestIds(@Param("ids") Collection<Long> ids);
 }

@@ -99,13 +99,19 @@ public class ManifestService {
 
     @Transactional(readOnly = true)
     public PageResponse<ManifestSummaryDto> search(Manifest.Status status, Long shiftId, Long senderId, LocalDate from, LocalDate to,
-                                                   Integer page, Integer size) {
+                                                   Integer pageNumber, Integer size) {
         LocalDate f = from == null ? LocalDate.of(2000, 1, 1) : from;
         LocalDate t = to == null ? LocalDate.of(2999, 12, 31) : to;
-        return PageResponse.of(manifests.search(status, shiftId, senderId, f, t,
-                        Paging.of(page, size, Sort.by(Sort.Direction.DESC, "operationDate", "id"))),
+        var page = manifests.search(status, shiftId, senderId, f, t,
+                Paging.of(pageNumber, size, Sort.by(Sort.Direction.DESC, "operationDate", "id")));
+        Map<Long, Long> counts = new java.util.HashMap<>();
+        if (!page.isEmpty()) {
+            manifestGuides.countByManifestIds(page.map(Manifest::getId).toList())
+                    .forEach(r -> counts.put((Long) r[0], (Long) r[1]));
+        }
+        return PageResponse.of(page,
                 m -> new ManifestSummaryDto(m.getId(), m.getNumber(), m.getStatus(), m.getOperationDate(), shiftRef(m.getShift()),
-                        senderRef(m.getSender()), (int) manifestGuides.countByManifest(m.getId()), userRef(m.getCreatedBy()),
+                        senderRef(m.getSender()), counts.getOrDefault(m.getId(), 0L).intValue(), userRef(m.getCreatedBy()),
                         m.getCreatedAt(), m.getClosedAt(), m.getVersion()));
     }
 
