@@ -16,10 +16,28 @@ Prioridad del cliente: **destinatarios → guías → validación → manifiesto
 2. Elige destinatario del catálogo (`recipientId`) o captura uno nuevo (`newRecipient`):
    - `saveToCatalog: false` → sólo en esta guía (no entra al catálogo).
    - `saveToCatalog: true` → se guarda en el catálogo (con detección de duplicados).
-3. Conceptos de mercancía, referencia CD / pedido, bultos, observaciones.
+3. Ruta (plaza origen → destino), servicio, dimensiones, conceptos de mercancía, clave CD / pedido, piezas, observaciones.
 4. Guarda como **borrador** o **confirma** (requiere `GUIDES_CONFIRM`). Al confirmar se validan los campos
    obligatorios configurados y se asigna el folio consecutivo en la misma transacción.
 5. Reenviar el mismo `clientRequestId` no crea otra guía.
+
+### Formato oficial de la guía (boceto del cliente `GUIA SALTER.xls`)
+| Dato en el documento | Origen en el sistema |
+|---|---|
+| `PBA → OAX` | `shipping.originCode` (por defecto la plaza del remitente) → `shipping.destinationCode` (obligatoria para confirmar) |
+| Remitente y ciudad | Copia del remitente (`senderName`, `senderCity`, `senderState`) |
+| Consignatario (nombre, calle, ciudad) | Copia del destinatario |
+| Fecha | Fecha de confirmación |
+| Peso | Suma del peso de los conceptos (`totalWeightKg`) |
+| Dimensiones | `shipping.dimensions` |
+| `8 PIEZAS` | `packageCount` |
+| `CVA-01` | Clave CD (`cdReference`) |
+| Código PDF417 | `FOLIO\|ORIGEN\|DESTINO\|PIEZAS\|PESO\|AAAAMMDD\|CLAVE CD` (el lector puede pegarlo en cualquier búsqueda por folio) |
+| `ATM 000000001` | Folio: siglas del remitente (configurables o calculadas del nombre) + consecutivo de `guide.folioDigits` dígitos por siglas |
+| Servicio ordinario / fecha compromiso | `shipping.serviceType` y `shipping.commitmentDate` (si no se captura: confirmación + días de `guide.services`) |
+| Nombre / firma | Espacio para quien recibe |
+
+Tamaño: `pdf.guide.pageSize` = `LETTER` (formato centrado en hoja carta) o `LABEL_4X6` (etiqueta térmica 4×6").
 
 ## 3. Estados de la guía (provisionales)
 

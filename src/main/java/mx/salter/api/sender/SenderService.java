@@ -105,6 +105,13 @@ public class SenderService {
         s.setEmail(Text.trimToNull(req.email()));
         s.setAddress((req.address() == null ? new AddressDto(null, null, null, null, null, null) : req.address()).toEntity());
         s.setNotes(Text.trimToNull(req.notes()));
+        s.setPlazaCode(upper(req.plazaCode()));
+        s.setGuidePrefix(upper(req.guidePrefix()));
+    }
+
+    private static String upper(String v) {
+        String t = Text.trimToNull(v);
+        return t == null ? null : t.toUpperCase();
     }
 
     private String nextCode() {

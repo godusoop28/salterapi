@@ -85,12 +85,13 @@ class FlujoOperativoTest extends IntegrationTestBase {
         assertThat(g1.status()).isEqualTo(201);
         assertThat(g1.body().get("status").asText()).isEqualTo("CONFIRMADA");
         assertThat(g1.body().get("recipientOneTime").asBoolean()).isTrue();
-        assertThat(g1.body().get("folio").asText()).startsWith("SAL-");
+        assertThat(g1.body().get("folio").asText()).matches("^RG\\d{9}$");
 
         Map<String, Object> recurrent = Map.of("clientRequestId", UUID.randomUUID().toString(),
                 "newRecipient", Map.of("firstName", "Recurrente", "phone", "2229998877",
                         "address", Map.of("street", "Calle 2", "city", "Puebla"), "saveToCatalog", true),
-                "items", List.of(Map.of("description", "Caja", "quantity", 1)), "confirm", false);
+                "items", List.of(Map.of("description", "Caja", "quantity", 1)),
+                "shipping", Map.of("destinationCode", "PBA"), "confirm", false);
         Res g2 = call(POST, "/api/guides", cap, recurrent);
         assertThat(g2.body().get("recipientId").asLong()).isPositive();
         assertThat(g2.body().has("folio")).isFalse(); // borrador sin folio
@@ -101,6 +102,52 @@ class FlujoOperativoTest extends IntegrationTestBase {
         Res again = call(POST, "/api/guides", cap, recurrent);
         assertThat(again.status()).isEqualTo(200);
         assertThat(again.body().get("id").asLong()).isEqualTo(g2.body().get("id").asLong());
+    }
+
+    @Test
+    void guiaConFormatoOficialDelCliente() throws Exception {
+        String admin = admin();
+        long sender = call(POST, "/api/senders", admin, Map.of("name", "Auto Todo Mexicana", "kind", "EMPRESA",
+                "plazaCode", "pba", "address", Map.of("city", "Puebla", "state", "Puebla"))).body().get("id").asLong();
+        Res s = call(GET, "/api/senders/" + sender, admin, null);
+        assertThat(s.body().get("effectiveGuidePrefix").asText()).isEqualTo("ATM");
+        String sup = user(admin, "SUPERVISOR", null, null);
+        Map<String, Object> body = new java.util.HashMap<>(Map.of("clientRequestId", UUID.randomUUID().toString(), "senderId", sender,
+                "newRecipient", Map.of("firstName", "Jaime Arturo", "lastName", "Avelar Morales",
+                        "address", Map.of("street", "Nicolas Bravo 204", "city", "Jojutla", "state", "Morelos"), "saveToCatalog", false),
+                "items", List.of(Map.of("description", "Caja", "quantity", 8, "weightKg", 10)),
+                "packageCount", 8, "cdReference", "CVA-01",
+                "shipping", Map.of("destinationCode", "oax", "dimensions", "30 x 20 x 15", "serviceType", "ORDINARIO"),
+                "confirm", true));
+        Res g = call(POST, "/api/guides", sup, body);
+        assertThat(g.status()).isEqualTo(201);
+        String folio = g.body().get("folio").asText();
+        assertThat(folio).matches("^ATM\\d{9}$");
+        assertThat(g.body().get("shipping").get("originCode").asText()).isEqualTo("PBA");
+        assertThat(g.body().get("shipping").get("destinationCode").asText()).isEqualTo("OAX");
+        assertThat(g.body().get("shipping").get("commitmentDate").asText())
+                .isEqualTo(java.time.LocalDate.now(java.time.ZoneId.of("America/Mexico_City")).plusDays(1).toString());
+        // Búsqueda por folio impreso ("ATM 000000001") y por lectura del PDF417 ("ATM000000001|PBA|OAX|…")
+        String printed = folio.substring(0, 3) + " " + folio.substring(3);
+        assertThat(call(GET, "/api/guides/by-folio/" + printed, sup, null).status()).isEqualTo(200);
+        assertThat(call(GET, "/api/guides/by-folio/" + folio + "|PBA|OAX|8", sup, null).status()).isEqualTo(200);
+        // Documento PDF con el formato oficial
+        var pdf = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .get("/api/guides/" + g.body().get("id").asLong() + "/pdf").header("Authorization", "Bearer " + sup)).andReturn().getResponse();
+        assertThat(pdf.getStatus()).isEqualTo(200);
+        byte[] bytes = pdf.getContentAsByteArray();
+        assertThat(new String(bytes, 0, 5, java.nio.charset.StandardCharsets.ISO_8859_1)).isEqualTo("%PDF-");
+        java.nio.file.Files.write(java.nio.file.Path.of("target", "guia-ejemplo.pdf"), bytes);
+        // Sin plaza de destino no se confirma
+        Map<String, Object> noDest = new java.util.HashMap<>(body);
+        noDest.put("clientRequestId", UUID.randomUUID().toString());
+        noDest.put("shipping", Map.of("dimensions", "10x10x10"));
+        Res bad = call(POST, "/api/guides", sup, noDest);
+        assertThat(bad.body().get("code").asText()).isEqualTo("INCOMPLETE_GUIDE");
+        // Servicio inválido
+        noDest.put("shipping", Map.of("destinationCode", "OAX", "serviceType", "PATITO"));
+        assertThat(call(POST, "/api/guides", sup, noDest).body().get("code").asText()).isEqualTo("INVALID_SERVICE");
+        assertThat(call(GET, "/api/guides/services", sup, null).body().get(0).get("code").asText()).isEqualTo("ORDINARIO");
     }
 
     @Test
@@ -122,7 +169,7 @@ class FlujoOperativoTest extends IntegrationTestBase {
         Set<String> folios = new HashSet<>();
         for (Future<String> f : pool.invokeAll(tasks)) folios.add(f.get());
         pool.shutdown();
-        assertThat(folios).hasSize(16).allMatch(f -> f.startsWith("SAL-"));
+        assertThat(folios).hasSize(16).allMatch(f -> f.matches("^RC\\d{9}$"));
     }
 
     @Test

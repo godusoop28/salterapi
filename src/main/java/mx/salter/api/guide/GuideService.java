@@ -2,6 +2,7 @@ package mx.salter.api.guide;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -38,6 +39,9 @@ import mx.salter.api.guide.GuideDtos.MovementDto;
 import mx.salter.api.guide.GuideDtos.NewRecipientInput;
 import mx.salter.api.guide.GuideDtos.PartyDto;
 import mx.salter.api.guide.GuideDtos.ReceptionDto;
+import mx.salter.api.guide.GuideDtos.ShippingDto;
+import mx.salter.api.guide.GuideDtos.ShippingInput;
+import mx.salter.api.sender.GuidePrefix;
 import mx.salter.api.incident.IncidentRepository;
 import mx.salter.api.manifest.ManifestGuideRepository;
 import mx.salter.api.operation.AssignmentRepository;
@@ -129,9 +133,24 @@ public class GuideService {
 
     @Transactional(readOnly = true)
     public GuideDto getByFolio(String folio) {
-        Guide g = guides.findByFolioIgnoreCase(folio.trim()).orElseThrow(() -> ApiException.notFound("Guía"));
+        Guide g = guides.findByFolioIgnoreCase(normalizeFolio(folio)).orElseThrow(() -> ApiException.notFound("Guía"));
         access.requireView(CurrentUser.get(), g);
         return toDto(g);
+    }
+
+    /**
+     * Normaliza un folio capturado o leído con escáner: el código PDF417 de la guía trae "FOLIO|ORIGEN|DESTINO|…"
+     * y en el documento se imprime con espacio ("ATM 000000001").
+     */
+    public static String normalizeFolio(String raw) {
+        if (raw == null) return "";
+        String f = raw.trim();
+        int bar = f.indexOf('|');
+        if (bar >= 0) f = f.substring(0, bar);
+        f = f.replaceAll("\\s+", "").toUpperCase();
+        // ATM-000000001 → ATM000000001 (sólo en el formato de siglas + número largo)
+        if (f.matches("^[A-Z]{2,6}-\\d{7,}$")) f = f.replace("-", "");
+        return f;
     }
 
     /** Guía visible para el usuario actual, con bloqueo de escritura para operar sobre ella. */
@@ -171,6 +190,7 @@ public class GuideService {
         g.setShift(resolveShift(req.shiftId()));
         applyRecipient(g, s, req.recipientId(), req.newRecipient());
         applyDetails(g, req.cdReference(), req.orderReference(), req.packageCount(), req.items(), req.notes());
+        applyShipping(g, s, req.shipping(), false);
         guides.saveAndFlush(g);
         fsm.record(g, MovementType.CREACION, null, null, null);
         audit.record("GUIDE_CREATED", "GUIDE", g.getId(), Map.of("senderId", s.getId(), "oneTimeRecipient", g.isRcptOneTime()));
@@ -199,6 +219,7 @@ public class GuideService {
         if (req.shiftId() != null) g.setShift(resolveShift(req.shiftId()));
         applyRecipient(g, s, req.recipientId(), req.newRecipient());
         applyDetails(g, req.cdReference(), req.orderReference(), req.packageCount(), req.items(), req.notes());
+        applyShipping(g, s, req.shipping(), false);
         fsm.record(g, MovementType.EDICION, null, null, null);
         if (req.confirm()) doConfirm(g);
         guides.flush();
@@ -224,10 +245,18 @@ public class GuideService {
 
     private void doConfirm(Guide g) {
         validateForConfirmation(g);
-        // Transición primero (valida el estado) y después se consume el folio en la misma transacción.
+        if (!g.getStatus().canTransitionTo(GuideStatus.CONFIRMADA)) {
+            throw ApiException.business("INVALID_TRANSITION", "La guía no se puede confirmar en su estado actual.");
+        }
+        // El folio se toma en la misma transacción: si algo falla después, se revierte y el número no se consume.
+        int padding = folioDigits();
+        String folio = folios.nextGuide(GuidePrefix.of(g.getSender()), padding);
         fsm.transition(g, GuideStatus.CONFIRMADA, MovementType.CONFIRMACION, null, null, null);
-        g.setFolio(folios.next(FolioService.GUIDE));
+        g.setFolio(folio);
         g.setConfirmedAt(clock.instant());
+        if (g.getCommitmentDate() == null) {
+            g.setCommitmentDate(LocalDate.now(clock.withZone(zone)).plusDays(serviceDays().getOrDefault(g.getServiceType(), 1)));
+        }
         g.setConfirmedBy(users.getReferenceById(CurrentUser.get().userId()));
         audit.record("GUIDE_CONFIRMED", "GUIDE", g.getId(), Map.of("folio", g.getFolio()));
     }
@@ -285,6 +314,7 @@ public class GuideService {
                 req.packageCount() != null ? req.packageCount() : g.getPackageCount(),
                 req.items() != null && !req.items().isEmpty() ? req.items() : null,
                 req.notes() != null ? req.notes() : g.getNotes());
+        if (req.shipping() != null) applyShipping(g, g.getSender(), req.shipping(), true);
         Map<String, Object> after = snapshotForAudit(g);
         Map<String, Object> diff = new LinkedHashMap<>();
         for (String k : after.keySet()) {
@@ -441,6 +471,63 @@ public class GuideService {
         }
     }
 
+    /** Tipos de servicio configurados (guide.services = "ORDINARIO:1,EXPRESS:0") con sus días para la fecha compromiso. */
+    public Map<String, Integer> serviceDays() {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        for (String part : settings.get("guide.services", "ORDINARIO:1").split(",")) {
+            String[] kv = part.trim().split(":");
+            if (kv[0].isBlank()) continue;
+            int days = 1;
+            if (kv.length > 1) {
+                try { days = Integer.parseInt(kv[1].trim()); } catch (NumberFormatException ignored) { }
+            }
+            m.put(kv[0].trim().toUpperCase(), Math.max(0, days));
+        }
+        if (m.isEmpty()) m.put("ORDINARIO", 1);
+        return m;
+    }
+
+    private void applyShipping(Guide g, Sender s, ShippingInput in, boolean merge) {
+        if (in == null) {
+            if (merge) return;
+            in = new ShippingInput(null, null, null, null, null);
+        }
+        String origin = upper(in.originCode());
+        String dest = upper(in.destinationCode());
+        String dims = Text.trimToNull(in.dimensions());
+        String service = upper(in.serviceType());
+        if (merge) {
+            if (origin == null) origin = g.getOriginCode();
+            if (dest == null) dest = g.getDestinationCode();
+            if (dims == null) dims = g.getDimensions();
+            if (service == null) service = g.getServiceType();
+        }
+        if (origin == null) origin = s.getPlazaCode();
+        Map<String, Integer> services = serviceDays();
+        if (service == null) service = services.keySet().iterator().next();
+        if (!services.containsKey(service)) {
+            throw ApiException.badRequest("INVALID_SERVICE", "Tipo de servicio no válido. Opciones: " + String.join(", ", services.keySet()) + ".");
+        }
+        g.setOriginCode(origin);
+        g.setDestinationCode(dest);
+        g.setDimensions(dims == null ? null : dims.toUpperCase());
+        g.setServiceType(service);
+        if (in.commitmentDate() != null || !merge) g.setCommitmentDate(in.commitmentDate());
+    }
+
+    private int folioDigits() {
+        try {
+            return Math.max(4, Math.min(12, Integer.parseInt(settings.get("guide.folioDigits", "9").trim())));
+        } catch (NumberFormatException e) {
+            return 9;
+        }
+    }
+
+    private static String upper(String v) {
+        String t = Text.trimToNull(v);
+        return t == null ? null : t.toUpperCase();
+    }
+
     private void validateForConfirmation(Guide g) {
         List<String> missing = new ArrayList<>();
         if (g.getRcptName() == null || g.getRcptName().isBlank()) missing.add("nombre del destinatario");
@@ -457,6 +544,10 @@ public class GuideService {
                 case "rcptZip" -> g.getRcptZip();
                 case "cdReference" -> g.getCdReference();
                 case "orderReference" -> g.getOrderReference();
+                case "originCode" -> g.getOriginCode();
+                case "destinationCode" -> g.getDestinationCode();
+                case "dimensions" -> g.getDimensions();
+                case "totalWeight" -> g.getTotalWeightKg() == null ? null : g.getTotalWeightKg().toPlainString();
                 default -> "n/a";
             };
             if (value == null || value.isBlank()) missing.add(FIELD_LABELS.getOrDefault(f, f));
@@ -467,11 +558,19 @@ public class GuideService {
         }
     }
 
-    private static final Map<String, String> FIELD_LABELS = Map.of(
-            "rcptPhone", "teléfono del destinatario", "rcptStreet", "calle del destinatario",
-            "rcptNeighborhood", "colonia del destinatario", "rcptCity", "ciudad del destinatario",
-            "rcptState", "estado del destinatario", "rcptZip", "código postal del destinatario",
-            "cdReference", "referencia CD", "orderReference", "referencia de pedido");
+    private static final Map<String, String> FIELD_LABELS = Map.ofEntries(
+            Map.entry("rcptPhone", "teléfono del destinatario"),
+            Map.entry("rcptStreet", "calle del destinatario"),
+            Map.entry("rcptNeighborhood", "colonia del destinatario"),
+            Map.entry("rcptCity", "ciudad del destinatario"),
+            Map.entry("rcptState", "estado del destinatario"),
+            Map.entry("rcptZip", "código postal del destinatario"),
+            Map.entry("cdReference", "referencia CD"),
+            Map.entry("orderReference", "referencia de pedido"),
+            Map.entry("originCode", "plaza de origen"),
+            Map.entry("destinationCode", "plaza de destino"),
+            Map.entry("dimensions", "dimensiones"),
+            Map.entry("totalWeight", "peso"));
 
     private static Map<String, Object> snapshotForAudit(Guide g) {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -485,6 +584,11 @@ public class GuideService {
         m.put("referenciaCD", g.getCdReference());
         m.put("pedido", g.getOrderReference());
         m.put("bultos", g.getPackageCount());
+        m.put("origen", g.getOriginCode());
+        m.put("destino", g.getDestinationCode());
+        m.put("dimensiones", g.getDimensions());
+        m.put("servicio", g.getServiceType());
+        m.put("fechaCompromiso", g.getCommitmentDate());
         m.put("notas", g.getNotes());
         m.put("conceptos", g.getItems().stream().map(i -> i.getQuantity().stripTrailingZeros().toPlainString() + " " + i.getUnit() + " " + i.getDescription()).toList());
         return m;
@@ -496,7 +600,7 @@ public class GuideService {
         return new GuideSummaryDto(g.getId(), g.getFolio(), g.displayReference(), g.getStatus(), g.getStatus().getLabel(),
                 g.getSender().getId(), g.getSenderName(), g.getRecipient() == null ? null : g.getRecipient().getId(),
                 g.getRcptName(), g.getRcptPhone(), g.getRcptCity(), g.getCdReference(), g.getOrderReference(), g.getPackageCount(),
-                g.getShift() == null ? null : new Ref(g.getShift().getId(), g.getShift().getName()),
+                g.getOriginCode(), g.getDestinationCode(), g.getShift() == null ? null : new Ref(g.getShift().getId(), g.getShift().getName()),
                 new Ref(g.getCreatedBy().getId(), g.getCreatedBy().getFullName()),
                 g.getCreatedAt(), g.getConfirmedAt(), g.getVersion());
     }
@@ -517,7 +621,9 @@ public class GuideService {
                 new PartyDto(g.getRcptName(), null, g.getRcptPhone(), g.getRcptEmail(),
                         new AddressDto(g.getRcptStreet(), g.getRcptNeighborhood(), g.getRcptCity(), g.getRcptState(), g.getRcptZip(), g.getRcptRefs())),
                 g.getShift() == null ? null : new Ref(g.getShift().getId(), g.getShift().getName()),
-                g.getCdReference(), g.getOrderReference(), g.getPackageCount(), g.getTotalWeightKg(), g.getNotes(),
+                g.getCdReference(), g.getOrderReference(), g.getPackageCount(), g.getTotalWeightKg(),
+                new ShippingDto(g.getOriginCode(), g.getDestinationCode(), g.getDimensions(), g.getServiceType(), g.getCommitmentDate()),
+                g.getNotes(),
                 g.getItems().stream().map(i -> new ItemDto(i.getId(), i.getPosition(), i.getConceptId(), i.getDescription(),
                         i.getQuantity(), i.getUnit(), i.getWeightKg())).toList(),
                 ref(g.getCreatedBy()), g.getCreatedAt(), g.getUpdatedAt(), g.getConfirmedAt(), ref(g.getConfirmedBy()),

@@ -47,6 +47,14 @@ public class Sender extends Timestamped {
 
     private String notes;
 
+    /** Plaza de origen por defecto en la guía (ej. PBA). */
+    @Column(name = "plaza_code")
+    private String plazaCode;
+
+    /** Siglas del folio de guía (ej. ATM para Auto Todo Mexicana). Si está vacío se calculan del nombre. */
+    @Column(name = "guide_prefix")
+    private String guidePrefix;
+
     @Column(nullable = false)
     private boolean active = true;
 

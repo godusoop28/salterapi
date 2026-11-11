@@ -19,6 +19,7 @@ import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -99,6 +100,12 @@ public class Guide extends Timestamped {
     @Column(name = "order_reference") private String orderReference;
     @Column(name = "package_count", nullable = false) private int packageCount = 1;
     @Column(name = "total_weight_kg") private BigDecimal totalWeightKg;
+    // Formato oficial de guía (boceto del cliente)
+    @Column(name = "origin_code") private String originCode;
+    @Column(name = "destination_code") private String destinationCode;
+    private String dimensions;
+    @Column(name = "service_type", nullable = false) private String serviceType = "ORDINARIO";
+    @Column(name = "commitment_date") private LocalDate commitmentDate;
     private String notes;
 
     @Column(name = "search_text", nullable = false)
@@ -135,7 +142,7 @@ public class Guide extends Timestamped {
     @PrePersist
     @PreUpdate
     void computeSearch() {
-        searchText = Text.truncate(Text.normalize(Text.join(folio, rcptName, rcptPhone, rcptCity, rcptNeighborhood,
+        searchText = Text.truncate(Text.normalize(Text.join(folio, rcptName, originCode, destinationCode, rcptPhone, rcptCity, rcptNeighborhood,
                 senderName, cdReference, orderReference)), 1200);
     }
 

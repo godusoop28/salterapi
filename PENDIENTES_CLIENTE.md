@@ -10,7 +10,7 @@ claramente señalados; ninguno debe considerarse acuerdo definitivo hasta valida
 
 | Material | Para qué se necesita | Estado actual |
 |---|---|---|
-| Ejemplo real de **guía** | Formato del PDF, campos obligatorios, tamaño, copias, QR/código de barras | Plantilla PROVISIONAL (`GuidePdfService`) |
+| Ejemplo real de **guía** | Formato del PDF, campos obligatorios, tamaño, copias, QR/código de barras | ✅ Recibido (`GUIA SALTER.xls`, 11/11/2026). Implementado en `GuidePdfService` con PDF417 |
 | Ejemplo de **manifiesto** | Columnas, firmas, totales, tamaño | Plantilla PROVISIONAL (`ManifestPdfService`) |
 | Formato del **CD** (documento de origen) | Saber si es sólo una referencia o un documento con estructura propia | Campo de texto `cd_reference` |
 | **Excel de destinatarios** (200–300) | Ajustar sinónimos de columnas y validaciones | Importador genérico con correspondencia manual |
@@ -24,7 +24,7 @@ claramente señalados; ninguno debe considerarse acuerdo definitivo hasta valida
 
 | # | Tema | Valor provisional | Dónde se cambia | Impacto si cambia |
 |---|---|---|---|---|
-| 1 | Formato de folio | `SAL-000001` consecutivo, sin huecos | Configuración `folio.guide.prefix`/`padding` | Bajo (configurable). Si debe incluir año/sucursal se ajusta `FolioService`. |
+| 1 | Formato de folio | ✅ Según boceto: siglas del remitente + 9 dígitos (`ATM 000000001`), consecutivo por siglas, sin huecos | Remitente → "Siglas del folio"; `guide.folioDigits` | Confirmar si el consecutivo es por remitente (implementado) o global. |
 | 2 | Momento del folio | Se asigna **al confirmar** (los borradores no consumen folio) | `GuideService.doConfirm` | Medio |
 | 3 | Estados de guía | Borrador, Confirmada, Lista para salida, En tránsito, Recibida en destino, Entrega final confirmada, Con incidencia, Retenida, Cancelada | `GuideStatus` | Medio: migración de datos si cambian nombres |
 | 4 | Recepción antes de entrega | Obligatoria (`delivery.requireReception=true`) | Configuración | Bajo: con `false` se permite En tránsito → Entregada |
@@ -41,5 +41,8 @@ claramente señalados; ninguno debe considerarse acuerdo definitivo hasta valida
 | 15 | Correcciones | Sólo guías Confirmadas (antes de cerrar manifiesto), auditadas con antes/después | `GuideService.correct` | Medio |
 | 16 | Datos del rastreo público | Folio, estado, eventos genéricos, ciudad/estado destino | `TrackingController` | Bajo |
 | 17 | Asignación de repartidor | Opcional al despachar; también manual en cualquier estado no terminal | `AssignmentService` | Bajo |
-| 18 | Datos fiscales / QR / código de barras | **No incluidos** | — | Requiere definición |
+| 18 | Datos fiscales / QR / código de barras | Código **PDF417** con `FOLIO\|ORIGEN\|DESTINO\|PIEZAS\|PESO\|FECHA\|CLAVE CD`; sin datos fiscales | `GuidePdfService.barcodeContent` | Confirmar contenido si usarán lector específico |
+| 20 | Clave junto a piezas (`CVA-01`) | Se interpretó como la **clave CD** (`cd_reference`) | Formulario de guía → "Clave CD" | Confirmar significado |
+| 21 | Fecha compromiso | Fecha de confirmación + días del servicio (`guide.services` = `ORDINARIO:1,EXPRESS:0`); editable al capturar | Configuración | Confirmar días por servicio y si se excluyen domingos |
+| 22 | Plazas (PBA, OAX) | Texto de 2–5 letras; origen por defecto del remitente, destino obligatorio para confirmar | Remitente → "Plaza de origen" | Si hay catálogo oficial de plazas se puede convertir en lista |
 | 19 | Almacenamiento de archivos | En PostgreSQL (bytea), máx. 5 MB | `attachments` | Medio si se migra a S3/R2 |

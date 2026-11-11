@@ -26,7 +26,7 @@ public final class GuideSpecs {
             if (Boolean.TRUE.equals(f.mine()) && p != null) ps.add(cb.equal(root.get("createdBy").get("id"), p.userId()));
             if (f.from() != null) ps.add(cb.greaterThanOrEqualTo(root.get("createdAt"), Clocks.startOfDay(f.from(), zone)));
             if (f.to() != null) ps.add(cb.lessThan(root.get("createdAt"), Clocks.endOfDayExclusive(f.to(), zone)));
-            if (f.folio() != null && !f.folio().isBlank()) ps.add(cb.equal(cb.upper(root.get("folio")), f.folio().trim().toUpperCase()));
+            if (f.folio() != null && !f.folio().isBlank()) ps.add(cb.equal(cb.upper(root.get("folio")), GuideService.normalizeFolio(f.folio())));
             if (f.q() != null && !f.q().isBlank()) {
                 for (String token : Text.normalize(f.q()).split(" ")) {
                     if (!token.isBlank()) ps.add(cb.like(root.get("searchText"), Text.likePattern(token), '\\'));

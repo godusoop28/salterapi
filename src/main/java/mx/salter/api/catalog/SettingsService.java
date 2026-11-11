@@ -40,7 +40,8 @@ public class SettingsService {
     public Map<String, String> all() {
         Map<String, String> out = new TreeMap<>();
         repo.findAll().forEach(s -> out.put(s.getKey(), s.getValue()));
-        folios.findAll().forEach(f -> {
+        // Las guías usan un consecutivo por siglas de remitente (GUIDE:ATM…), configurado con guide.folioDigits.
+        folios.findAll().stream().filter(f -> !f.getKey().startsWith(FolioService.GUIDE)).forEach(f -> {
             out.put("folio." + f.getKey().toLowerCase() + ".prefix", f.getPrefix());
             out.put("folio." + f.getKey().toLowerCase() + ".padding", String.valueOf(f.getPadding()));
         });

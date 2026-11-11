@@ -63,7 +63,7 @@ public class TrackingController {
             throw new ApiException(HttpStatus.NOT_FOUND, "TRACKING_DISABLED", "El rastreo público no está disponible.");
         }
         if (folio == null || folio.length() > 40) throw ApiException.notFound("Guía");
-        Guide g = guides.findByFolioIgnoreCase(folio.trim())
+        Guide g = guides.findByFolioIgnoreCase(mx.salter.api.guide.GuideService.normalizeFolio(folio))
                 .filter(x -> x.getStatus() != GuideStatus.BORRADOR)
                 .orElseThrow(() -> ApiException.notFound("Guía"));
         List<TrackingEvent> events = movements.findByGuideIdOrderByOccurredAtAscIdAsc(g.getId()).stream()

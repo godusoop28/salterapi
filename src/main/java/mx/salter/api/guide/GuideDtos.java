@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -40,6 +41,15 @@ public final class GuideDtos {
             @Size(max = 30) String unit,
             @DecimalMin(value = "0.0", message = "El peso no puede ser negativo") BigDecimal weightKg) {}
 
+    /** Datos de traslado que se plasman en la guía: PBA → OAX, dimensiones, servicio y fecha compromiso. */
+    public record ShippingInput(
+            @Pattern(regexp = "^([A-Za-z]{2,5})?$", message = "Origen: 2 a 5 letras (ej. PBA)") String originCode,
+            @Pattern(regexp = "^([A-Za-z]{2,5})?$", message = "Destino: 2 a 5 letras (ej. OAX)") String destinationCode,
+            @Size(max = 60) String dimensions,
+            @Size(max = 30) String serviceType,
+            /** Si se omite se calcula con los días del tipo de servicio (configuración guide.services). */
+            LocalDate commitmentDate) {}
+
     public record GuideRequest(
             /** Identificador generado por el cliente para evitar guías duplicadas por doble envío. */
             UUID clientRequestId,
@@ -50,6 +60,7 @@ public final class GuideDtos {
             @Size(max = 80) String cdReference,
             @Size(max = 80) String orderReference,
             @Min(1) @Max(9999) Integer packageCount,
+            @Valid ShippingInput shipping,
             @NotEmpty(message = "Agrega al menos un concepto de mercancía") @Size(max = 50) List<@Valid ItemInput> items,
             @Size(max = 1000) String notes,
             /** Confirmar inmediatamente (requiere permiso GUIDES_CONFIRM). */
@@ -66,6 +77,7 @@ public final class GuideDtos {
             @Size(max = 80) String cdReference,
             @Size(max = 80) String orderReference,
             @Min(1) @Max(9999) Integer packageCount,
+            @Valid ShippingInput shipping,
             @Size(max = 50) List<@Valid ItemInput> items,
             @Size(max = 1000) String notes,
             @NotNull Long version) {}
@@ -88,6 +100,9 @@ public final class GuideDtos {
         }
     }
 
+    public record ShippingDto(String originCode, String destinationCode, String dimensions, String serviceType,
+                              LocalDate commitmentDate) {}
+
     public record ManifestRef(Long id, String number, String status) {}
 
     public record AssignmentDto(Long courierId, String courierName, String courierPhone, Instant assignedAt, Integer routeOrder) {}
@@ -100,12 +115,12 @@ public final class GuideDtos {
     public record GuideSummaryDto(Long id, String folio, String reference, GuideStatus status, String statusLabel,
                                   Long senderId, String senderName, Long recipientId, String recipientName, String recipientPhone,
                                   String recipientCity, String cdReference, String orderReference, int packageCount,
-                                  Ref shift, Ref createdBy, Instant createdAt, Instant confirmedAt, long version) {}
+                                  String originCode, String destinationCode, Ref shift, Ref createdBy, Instant createdAt, Instant confirmedAt, long version) {}
 
     public record GuideDto(Long id, String folio, String reference, GuideStatus status, String statusLabel,
                            Long senderId, PartyDto sender, Long recipientId, boolean recipientOneTime, PartyDto recipient,
                            Ref shift, String cdReference, String orderReference, int packageCount, BigDecimal totalWeightKg,
-                           String notes, List<ItemDto> items, Ref createdBy, Instant createdAt, Instant updatedAt,
+                           ShippingDto shipping, String notes, List<ItemDto> items, Ref createdBy, Instant createdAt, Instant updatedAt,
                            Instant confirmedAt, Ref confirmedBy, Instant cancelledAt, Ref cancelledBy, String cancelReason,
                            ManifestRef manifest, AssignmentDto assignment, ReceptionDto reception, DeliveryDto delivery,
                            Long openIncidentId, List<MovementDto> movements, List<String> allowedActions, long version) {}

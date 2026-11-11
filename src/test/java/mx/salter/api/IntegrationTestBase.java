@@ -77,6 +77,7 @@ public abstract class IntegrationTestBase {
         return Map.of("clientRequestId", UUID.randomUUID().toString(),
                 "newRecipient", Map.of("firstName", recipientName, "address", Map.of("street", "Calle 1", "city", "Puebla"), "saveToCatalog", false),
                 "items", java.util.List.of(Map.of("description", "Caja", "quantity", 1, "unit", "PIEZA")),
+                "shipping", Map.of("destinationCode", "OAX", "dimensions", "30x20x15"),
                 "confirm", confirm);
     }
 }

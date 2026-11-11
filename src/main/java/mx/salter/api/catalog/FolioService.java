@@ -29,4 +29,19 @@ public class FolioService {
         seq.setNextValue(value + 1);
         return seq.getPrefix() + "-" + String.format("%0" + seq.getPadding() + "d", value);
     }
+
+    /**
+     * Folio de guía con el formato del cliente: SIGLAS + consecutivo de 9 dígitos (ATM000000001, se imprime
+     * "ATM 000000001"). Cada juego de siglas lleva su propio consecutivo, sin huecos.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public String nextGuide(String prefix, int padding) {
+        String key = GUIDE + ":" + prefix;
+        repo.createIfMissing(key, prefix, padding);
+        FolioSequence seq = repo.lockByKey(key).orElseThrow(() -> new IllegalStateException("Secuencia no configurada: " + key));
+        long value = seq.getNextValue();
+        seq.setNextValue(value + 1);
+        seq.setPadding(padding);
+        return seq.getPrefix() + String.format("%0" + seq.getPadding() + "d", value);
+    }
 }

@@ -63,6 +63,14 @@ public class GuideController {
         return service.search(new GuideFilter(q, status, senderId, shiftId, courierId, mine, from, to, withoutManifest, folio), page, size);
     }
 
+    public record ServiceOption(String code, int days) {}
+
+    @GetMapping("/services")
+    @Operation(summary = "Tipos de servicio de la guía y días para calcular la fecha compromiso.")
+    public List<ServiceOption> services() {
+        return service.serviceDays().entrySet().stream().map(e -> new ServiceOption(e.getKey(), e.getValue())).toList();
+    }
+
     @GetMapping("/{id}")
     public GuideDto get(@PathVariable Long id) {
         return service.get(id);
