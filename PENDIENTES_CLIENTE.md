@@ -45,4 +45,4 @@ claramente señalados; ninguno debe considerarse acuerdo definitivo hasta valida
 | 20 | Clave junto a piezas (`CVA-01`) | Se interpretó como la **clave CD** (`cd_reference`) | Formulario de guía → "Clave CD" | Confirmar significado |
 | 21 | Fecha compromiso | Fecha de confirmación + días del servicio (`guide.services` = `ORDINARIO:1,EXPRESS:0`); editable al capturar | Configuración | Confirmar días por servicio y si se excluyen domingos |
 | 22 | Plazas (PBA, OAX) | Texto de 2–5 letras; origen por defecto del remitente, destino obligatorio para confirmar | Remitente → "Plaza de origen" | Si hay catálogo oficial de plazas se puede convertir en lista |
-| 19 | Almacenamiento de archivos | En PostgreSQL (bytea), máx. 5 MB | `attachments` | Medio si se migra a S3/R2 |
+| 19 | Almacenamiento de archivos | Cloudinary (recursos privados) si existe `CLOUDINARY_URL`; si no, PostgreSQL. Máx. 5 MB | `FileStorage` | Bajo |

@@ -52,9 +52,22 @@ public class Attachment {
     @Column(nullable = false)
     private String sha256;
 
+    /** Contenido cuando storage = DB. */
     @Basic(fetch = FetchType.LAZY)
-    @Column(nullable = false)
     private byte[] data;
+
+    /** DB (PostgreSQL) o CLOUDINARY (recurso privado). */
+    @Column(nullable = false)
+    private String storage = "DB";
+
+    @Column(name = "storage_key")
+    private String storageKey;
+
+    @Column(name = "resource_type")
+    private String resourceType;
+
+    @Column(name = "storage_version")
+    private Long storageVersion;
 
     @Column(name = "uploaded_by")
     private Long uploadedBy;

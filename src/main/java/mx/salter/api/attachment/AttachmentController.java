@@ -53,17 +53,19 @@ public class AttachmentController {
     private final IncidentRepository incidents;
     private final GuideAccess access;
     private final AuditService audit;
+    private final FileStorage storage;
     private final long maxBytes;
     private final Set<String> allowed;
 
     public AttachmentController(AttachmentRepository repo, GuideRepository guides, IncidentRepository incidents, GuideAccess access,
-                                AuditService audit, @Value("${salter.uploads.max-bytes:5242880}") long maxBytes,
+                                AuditService audit, FileStorage storage, @Value("${salter.uploads.max-bytes:5242880}") long maxBytes,
                                 @Value("${salter.uploads.allowed-types:image/jpeg,image/png,image/webp,application/pdf}") String allowed) {
         this.repo = repo;
         this.guides = guides;
         this.incidents = incidents;
         this.access = access;
         this.audit = audit;
+        this.storage = storage;
         this.maxBytes = maxBytes;
         this.allowed = Arrays.stream(allowed.split(",")).map(String::trim).collect(Collectors.toSet());
     }
@@ -99,7 +101,15 @@ public class AttachmentController {
         a.setContentType(detected);
         a.setSizeBytes(data.length);
         a.setSha256(sha256(data));
-        a.setData(data);
+        if (storage.external()) {
+            FileStorage.Stored st = storage.upload(data, detected, ownerType.name().toLowerCase() + "/" + ownerId);
+            a.setStorage("CLOUDINARY");
+            a.setStorageKey(st.key());
+            a.setResourceType(st.resourceType());
+            a.setStorageVersion(st.version());
+        } else {
+            a.setData(data);
+        }
         a.setUploadedBy(CurrentUser.get().userId());
         repo.save(a);
         audit.record("ATTACHMENT_UPLOADED", ownerType.name(), ownerId, Map.of("attachmentId", a.getId(), "category", category.name()));
@@ -116,7 +126,7 @@ public class AttachmentController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename(a.getFilename()).build().toString())
                 .header("X-Content-Type-Options", "nosniff")
                 .contentType(MediaType.parseMediaType(a.getContentType()))
-                .body(a.getData());
+                .body("CLOUDINARY".equals(a.getStorage()) ? storage.download(a) : a.getData());
     }
 
     private void requireOwnerAccess(Attachment.OwnerType type, Long ownerId, boolean write) {
