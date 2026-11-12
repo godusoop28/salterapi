@@ -38,11 +38,15 @@ import org.springframework.web.multipart.MultipartFile;
  */
 @Service
 public class RecipientImportService {
-    public static final List<String> TARGET_FIELDS = List.of("firstName", "lastName", "phone", "email", "street",
-            "neighborhood", "city", "state", "zip", "references", "notes");
+    public static final List<String> TARGET_FIELDS = List.of("clientCode", "firstName", "lastName", "phone", "email", "street",
+            "extNumber", "neighborhood", "city", "state", "zip", "route", "subRoute", "references", "notes");
 
     private static final Map<String, List<String>> SYNONYMS = new LinkedHashMap<>();
     static {
+        SYNONYMS.put("clientCode", List.of("# cliente", "cliente", "no cliente", "num cliente", "numero de cliente", "clave cliente", "codigo cliente", "id cliente"));
+        SYNONYMS.put("subRoute", List.of("sub ruta", "subruta", "clave cd", "cd"));
+        SYNONYMS.put("route", List.of("ruta"));
+        SYNONYMS.put("extNumber", List.of("#", "no", "no.", "num", "num ext", "numero exterior", "no ext", "exterior"));
         SYNONYMS.put("firstName", List.of("nombre", "nombres", "name", "first name", "nombre completo", "destinatario"));
         SYNONYMS.put("lastName", List.of("apellido", "apellidos", "last name", "apellido paterno", "primer apellido"));
         SYNONYMS.put("phone", List.of("telefono", "tel", "celular", "movil", "phone", "whatsapp", "numero"));
@@ -97,8 +101,10 @@ public class RecipientImportService {
         for (var e : SYNONYMS.entrySet()) {
             for (String h : headers) {
                 if (used.contains(h)) continue;
-                String n = Text.normalize(h);
-                if (e.getValue().stream().anyMatch(syn -> n.equals(syn) || n.startsWith(syn + " "))) {
+                String n = headerKey(h);
+                String compact = n.replace(" ", "");
+                if (e.getValue().stream().anyMatch(syn -> n.equals(syn) || n.startsWith(syn + " ")
+                        || (syn.length() > 2 && compact.equals(syn.replace(" ", ""))))) {
                     mapping.put(e.getKey(), h);
                     used.add(h);
                     break;
@@ -106,6 +112,18 @@ public class RecipientImportService {
             }
         }
         return mapping;
+    }
+
+    /** "             N  O  M  B  R  E" → "nombre"; "# CLIENTE" → "# cliente"; "#" → "#". */
+    static String headerKey(String h) {
+        String raw = h == null ? "" : h.trim();
+        if (raw.equals("#")) return "#";
+        boolean hash = raw.startsWith("#");
+        String n = Text.normalize(raw);
+        // Letras separadas por espacios (encabezados "espaciados"): se unen.
+        if (n.matches("^(\\S\\s+){2,}\\S$")) n = n.replace(" ", "");
+        else n = n.replaceAll("(?<=\\b\\S)\\s(?=\\S\\b)", "");
+        return hash ? ("# " + n).trim() : n;
     }
 
     @Transactional(readOnly = true)
@@ -142,12 +160,15 @@ public class RecipientImportService {
             ImportRow row = byNumber.get(rr.rowNumber());
             Recipient r = new Recipient();
             r.setSender(s);
-            r.setFirstName(row.firstName().trim());
+            r.setFirstName(Text.truncate(row.firstName().trim().replaceAll("\\s+", " "), 120));
             r.setLastName(Text.trimToNull(row.lastName()));
             r.setPhone(Text.trimToNull(row.phone()));
             r.setEmail(Text.trimToNull(row.email()));
-            r.setAddress(new Address(Text.trimToNull(row.street()), Text.trimToNull(row.neighborhood()), Text.trimToNull(row.city()),
-                    Text.trimToNull(row.state()), Text.trimToNull(row.zip()), Text.trimToNull(row.references())));
+            r.setClientCode(cleanCode(row.clientCode()));
+            r.setRoute(cleanCode(row.route()));
+            r.setSubRoute(RecipientDtos.normalizeSubRoute(row.subRoute()));
+            r.setAddress(new Address(streetWithNumber(row), Text.trimToNull(row.neighborhood()), Text.trimToNull(row.city()),
+                    Text.trimToNull(row.state()), cleanZip(row.zip()), Text.trimToNull(row.references())));
             r.setNotes(Text.trimToNull(row.notes()));
             r.setCreatedBy(userId);
             toSave.add(r);
@@ -188,7 +209,7 @@ public class RecipientImportService {
                 errors++;
                 continue;
             }
-            Candidate c = Candidate.of(r.firstName(), r.lastName(), r.phone(), r.street(), r.zip());
+            Candidate c = Candidate.of(r.firstName(), r.lastName(), r.phone(), streetWithNumber(r), cleanZip(r.zip()));
             List<Match> matches = new ArrayList<>(DuplicateDetector.matches(c, existing));
             for (int i = 0; i < accepted.size(); i++) {
                 Level l = DuplicateDetector.compare(c, accepted.get(i));
@@ -220,13 +241,16 @@ public class RecipientImportService {
     private static List<String> rowErrors(ImportRow r) {
         List<String> e = new ArrayList<>();
         if (r.firstName() == null || r.firstName().isBlank()) e.add("El nombre es obligatorio.");
-        if (len(r.firstName()) > 120) e.add("El nombre excede 120 caracteres.");
+        if (len(r.firstName()) > 160) e.add("El nombre excede 160 caracteres.");
+        if (len(r.clientCode()) > 30) e.add("El número de cliente excede 30 caracteres.");
+        if (len(r.subRoute()) > 20 || len(r.route()) > 20) e.add("La ruta o subruta es demasiado larga.");
         if (len(r.lastName()) > 160) e.add("El apellido excede 160 caracteres.");
         if (len(r.street()) > 200) e.add("La calle excede 200 caracteres.");
         if (len(r.neighborhood()) > 120 || len(r.city()) > 120 || len(r.state()) > 120) e.add("Colonia, ciudad o estado demasiado largos.");
         if (len(r.references()) > 300) e.add("Las referencias exceden 300 caracteres.");
         if (len(r.notes()) > 500) e.add("Las notas exceden 500 caracteres.");
-        String zip = Text.trimToNull(r.zip());
+        String zip = cleanCode(r.zip());
+        if (zip != null && zip.matches("^\\d{4}$")) zip = "0" + zip;
         if (zip != null && !ZIP.matcher(zip).matches()) e.add("El código postal debe tener 5 dígitos.");
         String email = Text.trimToNull(r.email());
         if (email != null && (!EMAIL.matcher(email).matches() || email.length() > 160)) e.add("El correo no es válido.");
@@ -236,6 +260,29 @@ public class RecipientImportService {
             if (d.length() < 7 || d.length() > 15 || phone.length() > 30) e.add("El teléfono no es válido.");
         }
         return e;
+    }
+
+    static String cleanZip(String v) {
+        String z = cleanCode(v);
+        return z != null && z.matches("^\\d{4}$") ? "0" + z : z;
+    }
+
+    /** "11081.0" → "11081" (números leídos de Excel). */
+    static String cleanCode(String v) {
+        String t = Text.trimToNull(v);
+        if (t == null) return null;
+        return t.matches("^\\d+\\.0+$") ? t.substring(0, t.indexOf('.')) : t;
+    }
+
+    /** Calle + número exterior (columna "#") sin duplicar el número si ya viene en la calle. */
+    static String streetWithNumber(ImportRow r) {
+        String street = Text.trimToNull(r.street());
+        String num = cleanCode(r.extNumber());
+        if (street != null) street = street.replaceAll("\\s+", " ");
+        if (num == null) return street;
+        if (street == null) return num;
+        if (street.matches(".*\\b" + java.util.regex.Pattern.quote(num) + "\\b.*")) return street;
+        return Text.truncate(street + " " + num, 200);
     }
 
     private static int len(String s) {

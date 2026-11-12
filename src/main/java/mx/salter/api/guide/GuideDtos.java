@@ -87,7 +87,7 @@ public final class GuideDtos {
 
     // ─────────── Salida ───────────
 
-    public record PartyDto(String name, String contact, String phone, String email, AddressDto address) {}
+    public record PartyDto(String name, String contact, String phone, String email, AddressDto address, String clientCode) {}
 
     public record ItemDto(Long id, int position, Long conceptId, String description, BigDecimal quantity, String unit, BigDecimal weightKg) {}
 

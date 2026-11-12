@@ -95,6 +95,7 @@ public class Guide extends Timestamped {
     @Column(name = "rcpt_zip") private String rcptZip;
     @Column(name = "rcpt_refs") private String rcptRefs;
     @Column(name = "rcpt_one_time", nullable = false) private boolean rcptOneTime;
+    @Column(name = "rcpt_client_code") private String rcptClientCode;
 
     @Column(name = "cd_reference") private String cdReference;
     @Column(name = "order_reference") private String orderReference;
@@ -142,7 +143,7 @@ public class Guide extends Timestamped {
     @PrePersist
     @PreUpdate
     void computeSearch() {
-        searchText = Text.truncate(Text.normalize(Text.join(folio, rcptName, originCode, destinationCode, rcptPhone, rcptCity, rcptNeighborhood,
+        searchText = Text.truncate(Text.normalize(Text.join(folio, rcptClientCode, rcptName, originCode, destinationCode, rcptPhone, rcptCity, rcptNeighborhood,
                 senderName, cdReference, orderReference)), 1200);
     }
 

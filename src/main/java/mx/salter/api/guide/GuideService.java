@@ -191,6 +191,7 @@ public class GuideService {
         applyRecipient(g, s, req.recipientId(), req.newRecipient());
         applyDetails(g, req.cdReference(), req.orderReference(), req.packageCount(), req.items(), req.notes());
         applyShipping(g, s, req.shipping(), false);
+        applyRecipientDefaults(g);
         guides.saveAndFlush(g);
         fsm.record(g, MovementType.CREACION, null, null, null);
         audit.record("GUIDE_CREATED", "GUIDE", g.getId(), Map.of("senderId", s.getId(), "oneTimeRecipient", g.isRcptOneTime()));
@@ -220,6 +221,7 @@ public class GuideService {
         applyRecipient(g, s, req.recipientId(), req.newRecipient());
         applyDetails(g, req.cdReference(), req.orderReference(), req.packageCount(), req.items(), req.notes());
         applyShipping(g, s, req.shipping(), false);
+        applyRecipientDefaults(g);
         fsm.record(g, MovementType.EDICION, null, null, null);
         if (req.confirm()) doConfirm(g);
         guides.flush();
@@ -411,16 +413,18 @@ public class GuideService {
             g.setRcptName(r.fullName());
             g.setRcptPhone(r.getPhone());
             g.setRcptEmail(r.getEmail());
+            g.setRcptClientCode(r.getClientCode());
             applyRcptAddress(g, r.getAddress() == null ? new Address() : r.getAddress());
             return;
         }
+        g.setRcptClientCode(null);
         if (nr == null) throw ApiException.badRequest("RECIPIENT_REQUIRED", "Indica el destinatario.");
         if (nr.saveToCatalog()) {
             if (!CurrentUser.get().has(Permission.RECIPIENTS_MANAGE)) {
                 throw ApiException.forbidden("No tienes permiso para guardar destinatarios en el catálogo.");
             }
             RecipientDto created = recipientService.create(new RecipientRequest(s.getId(), nr.firstName(), nr.lastName(), nr.phone(),
-                    nr.email(), nr.address(), null, nr.allowProbableDuplicate(), null));
+                    nr.email(), nr.address(), null, null, null, null, nr.allowProbableDuplicate(), null));
             g.setRecipient(recipients.getReferenceById(created.id()));
             g.setRcptOneTime(false);
         } else {
@@ -431,6 +435,15 @@ public class GuideService {
         g.setRcptPhone(Text.trimToNull(nr.phone()));
         g.setRcptEmail(Text.trimToNull(nr.email()));
         applyRcptAddress(g, nr.address() == null ? new Address() : nr.address().toEntity());
+    }
+
+    /** Con un destinatario del catálogo, la Clave CD y la plaza destino salen de su subruta (ej. CVA-01 → CVA) si no se capturaron. */
+    private static void applyRecipientDefaults(Guide g) {
+        if (g.getRecipient() == null) return;
+        String sub = g.getRecipient().getSubRoute();
+        if (sub == null) return;
+        if (g.getCdReference() == null) g.setCdReference(sub);
+        if (g.getDestinationCode() == null) g.setDestinationCode(mx.salter.api.recipient.RecipientDtos.plazaOf(sub));
     }
 
     private static void applyRcptAddress(Guide g, Address a) {
@@ -616,10 +629,10 @@ public class GuideService {
         return new GuideDto(g.getId(), g.getFolio(), g.displayReference(), g.getStatus(), g.getStatus().getLabel(),
                 g.getSender().getId(),
                 new PartyDto(g.getSenderName(), g.getSenderContact(), g.getSenderPhone(), null,
-                        new AddressDto(g.getSenderStreet(), g.getSenderNeighborhood(), g.getSenderCity(), g.getSenderState(), g.getSenderZip(), null)),
+                        new AddressDto(g.getSenderStreet(), g.getSenderNeighborhood(), g.getSenderCity(), g.getSenderState(), g.getSenderZip(), null), null),
                 g.getRecipient() == null ? null : g.getRecipient().getId(), g.isRcptOneTime(),
                 new PartyDto(g.getRcptName(), null, g.getRcptPhone(), g.getRcptEmail(),
-                        new AddressDto(g.getRcptStreet(), g.getRcptNeighborhood(), g.getRcptCity(), g.getRcptState(), g.getRcptZip(), g.getRcptRefs())),
+                        new AddressDto(g.getRcptStreet(), g.getRcptNeighborhood(), g.getRcptCity(), g.getRcptState(), g.getRcptZip(), g.getRcptRefs()), g.getRcptClientCode()),
                 g.getShift() == null ? null : new Ref(g.getShift().getId(), g.getShift().getName()),
                 g.getCdReference(), g.getOrderReference(), g.getPackageCount(), g.getTotalWeightKg(),
                 new ShippingDto(g.getOriginCode(), g.getDestinationCode(), g.getDimensions(), g.getServiceType(), g.getCommitmentDate()),

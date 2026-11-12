@@ -51,6 +51,17 @@ public class Recipient extends Timestamped {
 
     private String notes;
 
+    /** Número de cliente en el sistema del remitente (ej. 11081). */
+    @Column(name = "client_code")
+    private String clientCode;
+
+    /** Ruta del remitente (ej. 74). */
+    private String route;
+
+    /** Subruta / Clave CD (ej. CVA-01). Su prefijo es la plaza destino. */
+    @Column(name = "sub_route")
+    private String subRoute;
+
     @Column(name = "search_text", nullable = false)
     private String searchText;
 
@@ -76,7 +87,7 @@ public class Recipient extends Timestamped {
         this.phoneDigits = Text.digits(phone);
         this.nameKey = nameKey(firstName, lastName);
         Address a = address == null ? new Address() : address;
-        this.searchText = Text.truncate(Text.normalize(Text.join(firstName, lastName, phone, phoneDigits, email,
+        this.searchText = Text.truncate(Text.normalize(Text.join(clientCode, firstName, lastName, phone, phoneDigits, email, subRoute,
                 a.getStreet(), a.getNeighborhood(), a.getCity(), a.getZip())), 600);
     }
 

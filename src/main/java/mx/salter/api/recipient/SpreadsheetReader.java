@@ -55,6 +55,8 @@ public final class SpreadsheetReader {
                     values.add(c == null ? "" : fmt.formatCellValue(c).trim());
                 }
                 if (values.stream().allMatch(String::isBlank)) continue;
+                // Los títulos ("LISTADO DE CLIENTES") ocupan una sola celda: el encabezado es la primera fila con 3+ columnas.
+                if (!headerRead && values.stream().filter(v -> !v.isBlank()).count() < 3 && row.getRowNum() < 15) continue;
                 if (!headerRead) {
                     headers.addAll(values);
                     headerRead = true;

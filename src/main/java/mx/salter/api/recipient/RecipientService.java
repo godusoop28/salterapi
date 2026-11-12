@@ -148,6 +148,9 @@ public class RecipientService {
         r.setEmail(Text.trimToNull(req.email()));
         r.setAddress((req.address() == null ? new AddressDto(null, null, null, null, null, null) : req.address()).toEntity());
         r.setNotes(Text.trimToNull(req.notes()));
+        r.setClientCode(Text.trimToNull(req.clientCode()));
+        r.setRoute(Text.trimToNull(req.route()));
+        r.setSubRoute(RecipientDtos.normalizeSubRoute(req.subRoute()));
     }
 
     /** 409 con la lista de coincidencias para que la interfaz las muestre. */
