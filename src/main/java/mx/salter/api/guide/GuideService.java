@@ -181,6 +181,7 @@ public class GuideService {
             throw ApiException.forbidden("No tienes permiso para confirmar guías. Guárdala como borrador.");
         }
         Sender s = senders.requireAccessible(req.senderId());
+        if (!req.allowDuplicateOrder()) rejectDuplicateOrders(s.getId(), req.orderReference(), null);
         User creator = users.getReferenceById(p.userId());
         Guide g = new Guide();
         g.setClientRequestId(req.clientRequestId());
@@ -213,6 +214,7 @@ public class GuideService {
         if (req.confirm() && !p.has(Permission.GUIDES_CONFIRM)) {
             throw ApiException.forbidden("No tienes permiso para confirmar guías.");
         }
+        if (!req.allowDuplicateOrder()) rejectDuplicateOrders(g.getSender().getId(), req.orderReference(), g.getId());
         Sender s = req.senderId() == null || req.senderId().equals(g.getSender().getId())
                 ? g.getSender() : senders.requireAccessible(req.senderId());
         g.setSender(s);
@@ -605,6 +607,44 @@ public class GuideService {
         m.put("notas", g.getNotes());
         m.put("conceptos", g.getItems().stream().map(i -> i.getQuantity().stripTrailingZeros().toPlainString() + " " + i.getUnit() + " " + i.getDescription()).toList());
         return m;
+    }
+
+    // ───────────────────────── Pedidos duplicados ─────────────────────────
+
+    /** Números de pedido de un texto libre: "8832824, 8833542" → [8832824, 8833542]. */
+    public static java.util.Set<String> orderNumbers(String orderReference) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (orderReference == null) return out;
+        for (String t : orderReference.toUpperCase(java.util.Locale.ROOT).split("[^A-Z0-9-]+")) {
+            if (t.length() >= 3) out.add(t);
+        }
+        return out;
+    }
+
+    /** Guías vigentes del remitente que ya tienen alguno de esos pedidos (sin contar la guía {@code excludeId}). */
+    @Transactional(readOnly = true)
+    public List<Guide> findDuplicateOrders(Long senderId, java.util.Collection<String> orders, Long excludeId) {
+        java.util.Map<Long, Guide> found = new java.util.LinkedHashMap<>();
+        for (String o : orders) {
+            for (Guide g : guides.findActiveByOrderLike(senderId, "%" + o + "%")) {
+                if (!g.getId().equals(excludeId) && orderNumbers(g.getOrderReference()).contains(o)) found.putIfAbsent(g.getId(), g);
+            }
+        }
+        return new ArrayList<>(found.values());
+    }
+
+    private void rejectDuplicateOrders(Long senderId, String orderReference, Long excludeId) {
+        java.util.Set<String> orders = orderNumbers(orderReference);
+        if (orders.isEmpty()) return;
+        List<Guide> dups = findDuplicateOrders(senderId, orders, excludeId);
+        if (dups.isEmpty()) return;
+        List<String> repeated = orders.stream().filter(o -> dups.stream().anyMatch(g -> orderNumbers(g.getOrderReference()).contains(o))).toList();
+        Guide first = dups.get(0);
+        throw ApiException.conflict("DUPLICATE_ORDER", (repeated.size() == 1 ? "El pedido " + repeated.get(0) + " ya está" : "Los pedidos " + String.join(", ", repeated) + " ya están")
+                        + " en la guía " + first.displayReference() + " (" + first.getRcptName() + ").")
+                .with("orders", repeated)
+                .with("guides", dups.stream().map(g -> java.util.Map.of("id", g.getId(), "reference", g.displayReference(),
+                        "recipient", g.getRcptName() == null ? "" : g.getRcptName(), "status", g.getStatus().getLabel())).toList());
     }
 
     // ───────────────────────── Mapeo ─────────────────────────

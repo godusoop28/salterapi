@@ -56,11 +56,13 @@ public class GuideImportService {
     private final SenderService senders;
     private final RecipientRepository recipients;
     private final GuideRepository guides;
+    private final GuideService guideService;
 
-    public GuideImportService(SenderService senders, RecipientRepository recipients, GuideRepository guides) {
+    public GuideImportService(SenderService senders, RecipientRepository recipients, GuideRepository guides, GuideService guideService) {
         this.senders = senders;
         this.recipients = recipients;
         this.guides = guides;
+        this.guideService = guideService;
     }
 
     public record TypeCount(String name, int quantity) {}
@@ -68,7 +70,7 @@ public class GuideImportService {
     public record ImportGroup(String requestId, String clientName, List<String> orders, String addressText, AddressDto address,
                               int packages, List<TypeCount> types, List<String> lpns, String route, String notes,
                               String matchType, RecipientDto recipient, List<RecipientDto> suggestions,
-                              Long existingGuideId, String existingFolio) {}
+                              Long existingGuideId, String existingFolio, List<String> duplicateOrders) {}
 
     public record ImportPreview(String fileName, Long senderId, String senderName, String load, String route,
                                 Integer declaredPackages, int totalPackages, String defaultDestination, List<ImportGroup> groups) {}
@@ -153,6 +155,15 @@ public class GuideImportService {
 
             UUID requestId = UUID.nameUUIDFromBytes((sender.getId() + "|" + fileKey + "|" + e.getKey()).getBytes(StandardCharsets.UTF_8));
             Optional<Guide> existing = guides.findByCreatedByIdAndClientRequestId(p.userId(), requestId);
+            // Duplicados: los mismos pedidos ya están en otra guía vigente del remitente (de cualquier usuario o archivo).
+            List<String> dupOrders = List.of();
+            if (existing.isEmpty()) {
+                List<Guide> dups = guideService.findDuplicateOrders(sender.getId(), orders, null);
+                if (!dups.isEmpty()) {
+                    existing = Optional.of(dups.get(0));
+                    dupOrders = orders.stream().filter(o -> dups.stream().anyMatch(d -> GuideService.orderNumbers(d.getOrderReference()).contains(o))).toList();
+                }
+            }
             String route = first.route != null ? first.route : parsed.route;
             String notes = Text.truncate(Text.join(parsed.load != null ? "Carga " + parsed.load + "." : null,
                     lpns.isEmpty() ? null : "LPN: " + String.join(", ", lpns)), 1000);
@@ -160,7 +171,7 @@ public class GuideImportService {
             groups.add(new ImportGroup(requestId.toString(), first.name, orders, addressText, parseAddress(addressText), count,
                     types.entrySet().stream().map(t -> new TypeCount(t.getKey(), t.getValue())).toList(), lpns, route, notes,
                     how, match == null ? null : RecipientDto.of(match), suggestions,
-                    existing.map(Guide::getId).orElse(null), existing.map(Guide::getFolio).orElse(null)));
+                    existing.map(Guide::getId).orElse(null), existing.map(Guide::displayReference).orElse(null), dupOrders));
         }
         groups.sort(Comparator.comparing(ImportGroup::clientName, String.CASE_INSENSITIVE_ORDER));
         String defaultDestination = destinations.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(null);

@@ -18,6 +18,12 @@ public interface GuideRepository extends JpaRepository<Guide, Long>, JpaSpecific
 
     Optional<Guide> findByFolioIgnoreCase(String folio);
 
+    /** Guías vigentes (no canceladas) del remitente cuyo número de pedido contiene el texto dado. */
+    @Query("""
+            select g from Guide g where g.sender.id = :senderId and g.status <> mx.salter.api.guide.GuideStatus.CANCELADA
+              and g.orderReference is not null and upper(g.orderReference) like :like order by g.id""")
+    List<Guide> findActiveByOrderLike(@Param("senderId") Long senderId, @Param("like") String like);
+
     @EntityGraph(attributePaths = {"items", "shift", "createdBy", "confirmedBy", "cancelledBy"})
     @Query("select g from Guide g where g.id = :id")
     Optional<Guide> findDetailed(@Param("id") Long id);

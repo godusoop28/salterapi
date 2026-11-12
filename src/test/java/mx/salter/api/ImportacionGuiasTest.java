@@ -98,6 +98,29 @@ class ImportacionGuiasTest extends IntegrationTestBase {
         JsonNode again = find(preview(remi, reporte()).get("groups"), "PEREZ LOPEZ ANA");
         assertThat(again.get("existingFolio").asText()).isEqualTo(g.body().get("folio").asText());
         assertThat(call(HttpMethod.POST, "/api/guides", remi, body).status()).isEqualTo(200); // no se duplica
+
+        // Otro usuario del mismo remitente sube el mismo archivo: lo detecta por número de pedido.
+        String otro = user(admin, "REMITENTE", sender, null);
+        JsonNode dup = find(preview(otro, reporte()).get("groups"), "PEREZ LOPEZ ANA");
+        assertThat(dup.get("existingFolio").asText()).isEqualTo(g.body().get("folio").asText());
+        assertThat(texts(dup.get("duplicateOrders"))).containsExactly("9001", "9003");
+        assertThat(find(preview(otro, reporte()).get("groups"), "CLIENTE NUEVO PRUEBA").hasNonNull("existingFolio")).isFalse();
+
+        // Captura manual con un pedido ya usado: se rechaza indicando la guía, salvo que se pida explícitamente.
+        Map<String, Object> manual = new java.util.HashMap<>(body);
+        manual.put("clientRequestId", java.util.UUID.randomUUID().toString());
+        manual.put("orderReference", "9003");
+        Res rejected = call(HttpMethod.POST, "/api/guides", otro, manual);
+        assertThat(rejected.status()).isEqualTo(409);
+        assertThat(rejected.body().get("code").asText()).isEqualTo("DUPLICATE_ORDER");
+        assertThat(rejected.body().get("detail").asText()).contains("9003", g.body().get("folio").asText());
+        manual.put("allowDuplicateOrder", true);
+        assertThat(call(HttpMethod.POST, "/api/guides", otro, manual).status()).isEqualTo(201);
+        // Un pedido distinto no se confunde con uno que lo contiene ("900" no es "9001").
+        manual.put("clientRequestId", java.util.UUID.randomUUID().toString());
+        manual.put("orderReference", "900");
+        manual.put("allowDuplicateOrder", false);
+        assertThat(call(HttpMethod.POST, "/api/guides", otro, manual).status()).isEqualTo(201);
     }
 
     @Test

@@ -65,7 +65,9 @@ public final class GuideDtos {
             @Size(max = 1000) String notes,
             /** Confirmar inmediatamente (requiere permiso GUIDES_CONFIRM). */
             boolean confirm,
-            Long version) {}
+            Long version,
+            /** Generar aunque el número de pedido ya esté en otra guía vigente del remitente. */
+            boolean allowDuplicateOrder) {}
 
     public record ReasonRequest(@NotBlank(message = "Indica el motivo") @Size(max = 500) String reason) {}
 
