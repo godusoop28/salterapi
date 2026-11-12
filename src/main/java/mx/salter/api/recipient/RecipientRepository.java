@@ -23,4 +23,6 @@ public interface RecipientRepository extends JpaRepository<Recipient, Long>, Jpa
             """)
     List<Recipient> findCandidatesBulk(@Param("senderId") Long senderId, @Param("nameKeys") Collection<String> nameKeys,
                                        @Param("phones") Collection<String> phones);
+
+    List<Recipient> findBySenderIdAndActiveTrue(Long senderId);
 }

@@ -32,7 +32,9 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/guides")
@@ -40,10 +42,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class GuideController {
     private final GuideService service;
     private final GuidePdfService pdf;
+    private final GuideImportService importer;
 
-    public GuideController(GuideService service, GuidePdfService pdf) {
+    public GuideController(GuideService service, GuidePdfService pdf, GuideImportService importer) {
         this.service = service;
         this.pdf = pdf;
+        this.importer = importer;
     }
 
     @GetMapping
@@ -108,6 +112,14 @@ public class GuideController {
     @Operation(summary = "Actualiza un borrador.")
     public GuideDto update(@PathVariable Long id, @Valid @RequestBody GuideRequest req) {
         return service.updateDraft(id, req);
+    }
+
+    @PostMapping(value = "/import/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAuthority('GUIDES_CREATE')")
+    @Operation(summary = "Lee el reporte de carga (Excel) y propone una guía por cliente, con sus pedidos y bultos.")
+    public GuideImportService.ImportPreview importPreview(@RequestPart("file") MultipartFile file,
+                                                          @RequestParam(required = false) Long senderId) {
+        return importer.preview(file, senderId);
     }
 
     @PostMapping("/{id}/confirm")
