@@ -27,10 +27,34 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
     private final AuthService service;
     private final SecurityProperties props;
+    private final DemoAccessService demo;
 
-    public AuthController(AuthService service, SecurityProperties props) {
+    public AuthController(AuthService service, SecurityProperties props, DemoAccessService demo) {
         this.service = service;
         this.props = props;
+        this.demo = demo;
+    }
+
+    public record DemoLoginRequest(String role) {}
+
+    public record DemoRoleDto(String code, String name, String description) {}
+
+    public record DemoInfo(boolean enabled, java.util.List<DemoRoleDto> roles) {}
+
+    @GetMapping("/demo")
+    @Operation(summary = "Acceso de pruebas: indica si está activo y qué roles ofrece.")
+    public DemoInfo demoInfo() {
+        if (!demo.isEnabled()) return new DemoInfo(false, java.util.List.of());
+        return new DemoInfo(true, DemoAccessService.ROLES.stream()
+                .map(r -> new DemoRoleDto(r.code(), r.name(), r.description())).toList());
+    }
+
+    @PostMapping("/demo-login")
+    @Operation(summary = "Acceso de pruebas: entra como el usuario de prueba del rol indicado (sólo si SALTER_DEMO_ACCESS=true).")
+    public ResponseEntity<LoginResponse> demoLogin(@RequestBody DemoLoginRequest req, HttpServletResponse res) {
+        LoginResponse out = demo.login(req.role());
+        res.addHeader(HttpHeaders.SET_COOKIE, cookie(out.token(), Duration.between(Instant.now(), out.expiresAt())).toString());
+        return ResponseEntity.ok(out);
     }
 
     @PostMapping("/login")

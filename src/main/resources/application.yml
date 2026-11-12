@@ -78,6 +78,10 @@ salter:
     allowed-types: image/jpeg,image/png,image/webp,application/pdf
   imports:
     max-rows: 5000
+  demo:
+    # ACCESO DE PRUEBAS: botones "entrar como <rol>" en el login. Activo por defecto mientras el sistema
+    # está en pruebas. Para producción real: SALTER_DEMO_ACCESS=false.
+    enabled: ${SALTER_DEMO_ACCESS:true}
 
 logging:
   level:
