@@ -72,11 +72,8 @@ public class DevDataSeeder implements ApplicationRunner {
 
         String hash = encoder.encode(password);
         if (!users.existsByEmailIgnoreCase("admin@salter.local")) create("admin@salter.local", "Administración (ejemplo)", "ADMIN", hash, null, null, Set.of());
-        create("supervisor@salter.local", "Supervisor (ejemplo)", "SUPERVISOR", hash, null, null, Set.of());
-        // El capturista de ejemplo recibe permisos adicionales para mostrar que son configurables por usuario.
-        create("capturista@salter.local", "Capturista (ejemplo)", "CAPTURISTA", hash, s, null, Set.of("GUIDES_CONFIRM", "RECIPIENTS_IMPORT"));
         create("repartidor@salter.local", "Repartidor (ejemplo)", "REPARTIDOR", hash, null, c, Set.of());
-        create("recepcion@salter.local", "Recepción (ejemplo)", "RECEPCION", hash, null, null, Set.of());
+        create("recepcion@salter.local", "Receptor (ejemplo)", "RECEPCION", hash, null, null, Set.of());
         create("remitente@salter.local", "Remitente (ejemplo)", "REMITENTE", hash, s, null, Set.of());
         log.info("Datos de ejemplo (perfil dev) creados: usuarios *@salter.local");
     }

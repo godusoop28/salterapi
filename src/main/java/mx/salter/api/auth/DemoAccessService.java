@@ -51,18 +51,14 @@ public class DemoAccessService implements ApplicationRunner {
     public record DemoRole(String code, String email, String name, String description) {}
 
     public static final List<DemoRole> ROLES = List.of(
-            new DemoRole("CAPTURISTA", "capturista.demo@salter.test", "Capturista ATM (pruebas)",
-                    "Elabora las guías de ATM: busca al cliente por nombre o número y confirma."),
-            new DemoRole("SUPERVISOR", "supervisor.demo@salter.test", "Supervisor (pruebas)",
-                    "Confirma guías, arma manifiestos, autoriza salidas y asigna repartidores."),
-            new DemoRole("RECEPCION", "recepcion.demo@salter.test", "Recepción (pruebas)",
+            new DemoRole("REMITENTE", "remitente.demo@salter.test", "ATM (remitente)",
+                    "Remitente ATM: elabora sus guías (busca al cliente por nombre o número) y consulta sus envíos y reportes."),
+            new DemoRole("ADMIN", "admin.demo@salter.test", "Administrador (pruebas)",
+                    "Administrador general: guías, manifiestos, salidas, repartidores, usuarios y reportes."),
+            new DemoRole("RECEPCION", "recepcion.demo@salter.test", "Receptor (pruebas)",
                     "Busca guías por folio y confirma la recepción en destino."),
             new DemoRole("REPARTIDOR", "repartidor.demo@salter.test", "Repartidor (pruebas)",
-                    "App móvil: sus envíos asignados, incidencias y entrega."),
-            new DemoRole("REMITENTE", "remitente.demo@salter.test", "ATM (portal del cliente)",
-                    "Portal del cliente ATM: sólo sus envíos y reportes."),
-            new DemoRole("ADMIN", "admin.demo@salter.test", "Administrador (pruebas)",
-                    "Acceso total: usuarios, catálogos, configuración y reportes."));
+                    "App móvil: sus envíos asignados, incidencias y entrega."));
 
     private final boolean enabled;
     private final UserRepository users;
@@ -109,11 +105,10 @@ public class DemoAccessService implements ApplicationRunner {
                 u.setEmail(r.email());
                 u.setPasswordHash(encoder.encode(UUID.randomUUID().toString()));
                 u.setRole(roles.findByCode(r.code()).orElseThrow());
-                if (r.code().equals("CAPTURISTA")) u.getGrantedPermissions().addAll(Set.of("GUIDES_CONFIRM", "RECIPIENTS_IMPORT"));
                 created++;
             }
             u.setFullName(r.name());
-            if (r.code().equals("CAPTURISTA") || r.code().equals("REMITENTE")) u.setSender(atm);
+            if (r.code().equals("REMITENTE")) u.setSender(atm);
             if (r.code().equals("REPARTIDOR")) u.setCourier(courier);
             users.save(u);
         }

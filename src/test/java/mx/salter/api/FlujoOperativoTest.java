@@ -36,22 +36,26 @@ class FlujoOperativoTest extends IntegrationTestBase {
     void accesoRestringidoPorRol() throws Exception {
         String admin = admin();
         long sender = createSender(admin, "Remitente roles");
-        String cap = user(admin, "CAPTURISTA", sender, null);
+        String cap = user(admin, "REMITENTE", sender, null);
         String rep = user(admin, "REPARTIDOR", null, createCourier(admin, "Rep roles"));
         assertThat(call(GET, "/api/users", cap, null).status()).isEqualTo(403);
         assertThat(call(PUT, "/api/settings", cap, Map.of("company.name", "X")).status()).isEqualTo(403);
         assertThat(call(GET, "/api/manifests", cap, null).status()).isEqualTo(403);
         assertThat(call(GET, "/api/reports/summary", rep, null).status()).isEqualTo(403);
         assertThat(call(POST, "/api/guides", rep, guideBody("X", false)).status()).isEqualTo(403);
-        // Sin permiso de confirmar (no concedido por defecto al capturista)
-        assertThat(call(POST, "/api/guides", cap, guideBody("Sin permiso", true)).status()).isEqualTo(403);
+        // El receptor no elabora guías
+        String rec = user(admin, "RECEPCION", null, null);
+        assertThat(call(POST, "/api/guides", rec, guideBody("Sin permiso", true)).status()).isEqualTo(403);
+        // Los roles eliminados ya no existen
+        assertThat(call(GET, "/api/roles", admin, null).body().findValuesAsText("code"))
+                .containsExactlyInAnyOrder("ADMIN", "REMITENTE", "RECEPCION", "REPARTIDOR");
     }
 
     @Test
     void importacionYDeteccionDeDuplicados() throws Exception {
         String admin = admin();
         long sender = createSender(admin, "Remitente import");
-        String cap = user(admin, "CAPTURISTA", sender, null, "RECIPIENTS_IMPORT");
+        String cap = user(admin, "REMITENTE", sender, null);
         List<Map<String, Object>> rows = List.of(
                 Map.of("rowNumber", 2, "firstName", "Lucía", "lastName", "Hernández", "phone", "55 1111 2222", "zip", "01000"),
                 Map.of("rowNumber", 3, "firstName", "LUCIA", "lastName", "HERNANDEZ", "phone", "5511112222"),
@@ -80,7 +84,7 @@ class FlujoOperativoTest extends IntegrationTestBase {
     void guiasConDestinatarioTemporalRecurrenteYFolios() throws Exception {
         String admin = admin();
         long sender = createSender(admin, "Remitente guías");
-        String cap = user(admin, "CAPTURISTA", sender, null, "GUIDES_CONFIRM");
+        String cap = user(admin, "REMITENTE", sender, null);
         Res g1 = call(POST, "/api/guides", cap, guideBody("Temporal", true));
         assertThat(g1.status()).isEqualTo(201);
         assertThat(g1.body().get("status").asText()).isEqualTo("CONFIRMADA");
@@ -111,7 +115,7 @@ class FlujoOperativoTest extends IntegrationTestBase {
                 "plazaCode", "pba", "address", Map.of("city", "Puebla", "state", "Puebla"))).body().get("id").asLong();
         Res s = call(GET, "/api/senders/" + sender, admin, null);
         assertThat(s.body().get("effectiveGuidePrefix").asText()).isEqualTo("ATM");
-        String sup = user(admin, "SUPERVISOR", null, null);
+        String sup = user(admin, "ADMIN", null, null);
         Map<String, Object> body = new java.util.HashMap<>(Map.of("clientRequestId", UUID.randomUUID().toString(), "senderId", sender,
                 "newRecipient", Map.of("firstName", "Jaime Arturo", "lastName", "Avelar Morales",
                         "address", Map.of("street", "Nicolas Bravo 204", "city", "Jojutla", "state", "Morelos"), "saveToCatalog", false),
@@ -154,7 +158,7 @@ class FlujoOperativoTest extends IntegrationTestBase {
     void foliosUnicosConSolicitudesSimultaneas() throws Exception {
         String admin = admin();
         long sender = createSender(admin, "Remitente concurrencia");
-        String sup = user(admin, "SUPERVISOR", null, null);
+        String sup = user(admin, "ADMIN", null, null);
         ExecutorService pool = Executors.newFixedThreadPool(8);
         List<Callable<String>> tasks = new ArrayList<>();
         for (int i = 0; i < 16; i++) {
@@ -178,8 +182,8 @@ class FlujoOperativoTest extends IntegrationTestBase {
         long sender = createSender(admin, "Remitente flujo");
         long otherSender = createSender(admin, "Remitente ajeno");
         long courier = createCourier(admin, "Repartidor flujo");
-        String cap = user(admin, "CAPTURISTA", sender, null, "GUIDES_CONFIRM");
-        String sup = user(admin, "SUPERVISOR", null, null);
+        String cap = user(admin, "REMITENTE", sender, null);
+        String sup = user(admin, "ADMIN", null, null);
         String rep = user(admin, "REPARTIDOR", null, courier);
         String rec = user(admin, "RECEPCION", null, null);
         String remi = user(admin, "REMITENTE", sender, null);
