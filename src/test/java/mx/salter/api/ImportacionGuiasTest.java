@@ -123,6 +123,34 @@ class ImportacionGuiasTest extends IntegrationTestBase {
         assertThat(call(HttpMethod.POST, "/api/guides", otro, manual).status()).isEqualTo(201);
     }
 
+    /** Rutas de embarque del listado (V10): sin ruta predeterminada, la guía toma la de la RUTA del cliente. */
+    @Test
+    void asignaLaRutaDeEmbarqueSegunLaRutaDelCliente() throws Exception {
+        String admin = admin();
+        long sender = createSender(admin, "Remitente con rutas del listado");
+        String remi = user(admin, "REMITENTE", sender, null);
+        JsonNode routes = call(HttpMethod.GET, "/api/shipping-routes", admin, null).body();
+        List<String> codes = new ArrayList<>();
+        routes.forEach(r -> codes.add(r.get("code").asText()));
+        assertThat(codes).contains("74", "75", "76", "77", "78", "13", "19", "3");
+
+        java.util.function.BiFunction<String, String, JsonNode> guideFor = (name, route) -> {
+            try {
+                long rid = call(HttpMethod.POST, "/api/recipients", remi, Map.of("firstName", name, "route", route, "subRoute", "CVA-03",
+                        "address", Map.of("street", "Calle " + name, "city", "Jojutla"))).body().get("id").asLong();
+                Res g = call(HttpMethod.POST, "/api/guides", remi, Map.of("clientRequestId", java.util.UUID.randomUUID().toString(),
+                        "recipientId", rid, "items", List.of(Map.of("description", "Caja", "quantity", 1)), "confirm", false));
+                assertThat(g.status()).as(String.valueOf(g.body())).isEqualTo(201);
+                return g.body();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        };
+        assertThat(guideFor.apply("CLIENTE RUTA SETENTA Y CUATRO", "74").get("shippingRoute").get("name").asText()).isEqualTo("74 · MORELOS");
+        assertThat(guideFor.apply("CLIENTE RUTA CERO TRES", "03").get("shippingRoute").get("name").asText()).isEqualTo("3 · OAXACA ISTMO");
+        assertThat(guideFor.apply("CLIENTE RUTA DESCONOCIDA", "99").hasNonNull("shippingRoute")).isFalse();
+    }
+
     @Test
     void rechazaArchivosSinElFormatoDelReporte() throws Exception {
         String admin = admin();

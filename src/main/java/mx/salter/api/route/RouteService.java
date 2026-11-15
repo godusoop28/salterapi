@@ -45,6 +45,18 @@ public class RouteService {
         return r;
     }
 
+    /**
+     * Ruta de embarque activa cuya clave es la RUTA del destinatario (listado de clientes, ej. «74» o «074»).
+     * Vacío si no hay ruta o no está dada de alta.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<ShippingRoute> findActiveByClientRoute(String clientRoute) {
+        String code = Text.trimToNull(clientRoute);
+        if (code == null) return java.util.Optional.empty();
+        if (code.matches("\\d{1,15}(\\.0+)?")) code = String.valueOf(Long.parseLong(code.replaceAll("\\.0+$", "")));
+        return routes.findFirstByCodeIgnoreCaseAndActiveTrue(code);
+    }
+
     @Transactional
     public RouteDto create(RouteRequest req) {
         String code = req.code().trim().toUpperCase();

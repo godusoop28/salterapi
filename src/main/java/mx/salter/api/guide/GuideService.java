@@ -413,6 +413,10 @@ public class GuideService {
     private Map<String, Object> applyRoute(Guide g, Sender s, Long requestedId, String reason) {
         mx.salter.api.route.ShippingRoute def = s.getDefaultShippingRoute();
         if (requestedId == null) {
+            // Sin ruta predeterminada: la de la RUTA del destinatario (ej. 74), si está dada de alta.
+            if (def == null && g.getRecipient() != null) {
+                def = routeService.findActiveByClientRoute(g.getRecipient().getRoute()).orElse(null);
+            }
             g.setShippingRoute(def);
             return null;
         }

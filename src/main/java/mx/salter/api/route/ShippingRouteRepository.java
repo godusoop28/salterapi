@@ -14,6 +14,8 @@ public interface ShippingRouteRepository extends JpaRepository<ShippingRoute, Lo
 
     boolean existsByCodeIgnoreCase(String code);
 
+    Optional<ShippingRoute> findFirstByCodeIgnoreCaseAndActiveTrue(String code);
+
     boolean existsByCodeIgnoreCaseAndIdNot(String code, Long id);
 
     /** Serializa la búsqueda/creación del manifiesto en preparación de una ruta. */
