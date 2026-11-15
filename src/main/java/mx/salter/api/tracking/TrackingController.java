@@ -71,7 +71,7 @@ public class TrackingController {
                 .map(m -> new TrackingEvent(m.getType().name(), m.getType().getLabel(), m.getToStatus().getLabel(), m.getOccurredAt()))
                 .toList();
         return new TrackingDto(g.getFolio(), g.getStatus().name(), g.getStatus().getLabel(), g.getRcptCity(), g.getRcptState(),
-                g.getPackageCount(), g.getConfirmedAt(), events);
+                g.pieces(), g.getConfirmedAt(), events);
     }
 
     private void rateLimit(String ip) {

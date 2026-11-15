@@ -44,4 +44,7 @@ public class GuideItem {
 
     @Column(name = "weight_kg")
     private BigDecimal weightKg;
+
+    /** Descripción opcional del renglón (ej. "refacciones frágiles"). El tipo de bulto está en description. */
+    private String detail;
 }

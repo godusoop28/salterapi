@@ -88,14 +88,14 @@ public class OperationService {
         receptions.saveAndFlush(r);
         Map<String, Object> meta = new LinkedHashMap<>();
         if (req.receivedCount() != null) meta.put("receivedCount", req.receivedCount());
-        meta.put("expectedCount", g.getPackageCount());
+        meta.put("expectedCount", g.pieces());
         if (req.hasDifferences()) meta.put("differences", req.differences().trim());
         fsm.transition(g, GuideStatus.RECIBIDA_DESTINO, MovementType.RECEPCION, req.notes(), req.location(), meta);
         audit.record("GUIDE_RECEIVED", "GUIDE", g.getId(), meta);
-        boolean countMismatch = req.receivedCount() != null && req.receivedCount() != g.getPackageCount();
+        boolean countMismatch = req.receivedCount() != null && req.receivedCount() != g.pieces();
         if (req.hasDifferences() || countMismatch) {
             String desc = req.hasDifferences() ? req.differences().trim()
-                    : "Se recibieron " + req.receivedCount() + " bultos de " + g.getPackageCount() + " esperados.";
+                    : "Se recibieron " + req.receivedCount() + " bultos de " + g.pieces() + " esperados.";
             incidents.openInternal(g, Incident.Type.DIFERENCIA_RECEPCION, Incident.Severity.MEDIA, desc);
         }
         return guideService.toDto(g);

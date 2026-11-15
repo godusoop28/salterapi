@@ -42,8 +42,24 @@ public final class GuideSpecs {
             if (Boolean.TRUE.equals(f.withoutManifest())) {
                 Subquery<Long> sq = query.subquery(Long.class);
                 var mg = sq.from(ManifestGuide.class);
-                sq.select(mg.get("guide").get("id")).where(cb.equal(mg.get("guide"), root));
+                sq.select(mg.get("guide").get("id")).where(cb.equal(mg.get("guide"), root), cb.isTrue(mg.get("active")));
                 ps.add(cb.not(cb.exists(sq)));
+            }
+            if (f.subRoute() != null && !f.subRoute().isBlank()) {
+                ps.add(cb.equal(root.get("subRoute"), mx.salter.api.recipient.RecipientDtos.normalizeSubRoute(f.subRoute())));
+            }
+            if (f.shippingRouteId() != null) ps.add(cb.equal(root.get("shippingRoute").get("id"), f.shippingRouteId()));
+            if (f.manifestId() != null) {
+                Subquery<Long> sq = query.subquery(Long.class);
+                var mg = sq.from(ManifestGuide.class);
+                sq.select(mg.get("guide").get("id")).where(cb.equal(mg.get("guide"), root), cb.equal(mg.get("manifest").get("id"), f.manifestId()));
+                ps.add(cb.exists(sq));
+            }
+            if (f.client() != null && !f.client().isBlank()) {
+                // Nombre del cliente (consignatario) sin acentos: se busca en el texto normalizado de la guía.
+                for (String token : Text.normalize(f.client()).split(" ")) {
+                    if (!token.isBlank()) ps.add(cb.like(root.get("searchText"), Text.likePattern(token), (char) 92));
+                }
             }
             return cb.and(ps.toArray(Predicate[]::new));
         };

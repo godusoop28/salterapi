@@ -17,11 +17,12 @@ public final class RecipientDtos {
 
     public record RecipientDto(Long id, Long senderId, String senderName, String firstName, String lastName, String fullName,
                                String phone, String email, AddressDto address, String notes, String clientCode, String route,
-                               String subRoute, String destinationCode, boolean active, Instant createdAt, long version) {
+                               String subRoute, String destinationCode, java.math.BigDecimal latitude, java.math.BigDecimal longitude,
+                               boolean locationVerified, boolean active, Instant createdAt, long version) {
         public static RecipientDto of(Recipient r) {
             return new RecipientDto(r.getId(), r.getSender().getId(), r.getSender().getName(), r.getFirstName(), r.getLastName(),
                     r.fullName(), r.getPhone(), r.getEmail(), AddressDto.of(r.getAddress()), r.getNotes(), r.getClientCode(), r.getRoute(),
-                    r.getSubRoute(), plazaOf(r.getSubRoute()), r.isActive(),
+                    r.getSubRoute(), plazaOf(r.getSubRoute()), r.getLatitude(), r.getLongitude(), r.isLocationVerified(), r.isActive(),
                     r.getCreatedAt(), r.getVersion());
         }
     }
@@ -53,7 +54,11 @@ public final class RecipientDtos {
             @Size(max = 20) String subRoute,
             /** Permite guardar aunque existan coincidencias probables (las exactas siempre se bloquean). */
             boolean allowProbableDuplicate,
-            Long version) {}
+            Long version,
+            /** Ubicación del local (opcional; ambos o ninguno). */
+            @jakarta.validation.constraints.DecimalMin("-90") @jakarta.validation.constraints.DecimalMax("90") java.math.BigDecimal latitude,
+            @jakarta.validation.constraints.DecimalMin("-180") @jakarta.validation.constraints.DecimalMax("180") java.math.BigDecimal longitude,
+            Boolean locationVerified) {}
 
     public record DuplicateCheckRequest(Long senderId, @NotBlank String firstName, String lastName, String phone,
                                         String street, String zip, Long excludeId) {}

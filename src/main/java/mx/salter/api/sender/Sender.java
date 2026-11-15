@@ -55,6 +55,11 @@ public class Sender extends Timestamped {
     @Column(name = "guide_prefix")
     private String guidePrefix;
 
+    /** Ruta de embarque predeterminada: se propone al crear cada guía del remitente. */
+    @jakarta.persistence.ManyToOne(fetch = jakarta.persistence.FetchType.LAZY)
+    @jakarta.persistence.JoinColumn(name = "default_shipping_route_id")
+    private mx.salter.api.route.ShippingRoute defaultShippingRoute;
+
     @Column(nullable = false)
     private boolean active = true;
 

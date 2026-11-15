@@ -64,6 +64,23 @@ public class ManifestGuide {
     @Column(nullable = false)
     private int position;
 
+    /** Viaja = sí por defecto. Las que no viajan no se despachan ni se cuentan como despachadas. */
+    @Column(nullable = false)
+    private boolean travels = true;
+
+    @Column(name = "travel_changed_by")
+    private Long travelChangedBy;
+
+    @Column(name = "travel_changed_at")
+    private java.time.Instant travelChangedAt;
+
+    @Column(name = "travel_reason")
+    private String travelReason;
+
+    /** false = historial: la guía estuvo en este manifiesto pero no viajó y quedó libre para otro. */
+    @Column(nullable = false)
+    private boolean active = true;
+
     public ManifestGuide(Manifest manifest, Guide guide, int position) {
         this.manifest = manifest;
         this.guide = guide;

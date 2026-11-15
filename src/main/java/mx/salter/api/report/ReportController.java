@@ -41,8 +41,20 @@ public class ReportController {
                                          @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                          @RequestParam(required = false) Long senderId, @RequestParam(required = false) Long shiftId,
                                          @RequestParam(required = false) Long courierId, @RequestParam(required = false) GuideStatus status,
-                                         @RequestParam(required = false) String destination) {
-        return service.summary(new ReportService.Filter(from, to, senderId, shiftId, courierId, status, destination));
+                                         @RequestParam(required = false) String destination,
+                                         @RequestParam(required = false) String client, @RequestParam(required = false) String subRoute,
+                                         @RequestParam(required = false) Long shippingRouteId, @RequestParam(required = false) Long manifestId,
+                                         @RequestParam(required = false) String folio) {
+        return service.summary(new ReportService.Filter(from, to, senderId, shiftId, courierId, status, destination, client, subRoute,
+                shippingRouteId, manifestId, folio));
+    }
+
+    @GetMapping("/today")
+    @PreAuthorize("hasAnyAuthority('REPORTS_OWN','REPORTS_VIEW','SHIPMENTS_OWN','DASHBOARD_VIEW','GUIDES_VIEW_OWN')")
+    @Operation(summary = "Guías del día (confirmadas hoy, hora de México) entregadas / en tránsito / pendientes, con porcentajes que suman 100.")
+    public ReportService.DayStatus today(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+                                         @RequestParam(required = false) Long senderId) {
+        return service.today(date, senderId);
     }
 
     @GetMapping("/guides/export")
@@ -54,8 +66,12 @@ public class ReportController {
                                          @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                          @RequestParam(required = false) Long senderId, @RequestParam(required = false) Long shiftId,
                                          @RequestParam(required = false) Long courierId, @RequestParam(required = false) GuideStatus status,
-                                         @RequestParam(required = false) String destination) {
-        ReportService.Filter f = new ReportService.Filter(from, to, senderId, shiftId, courierId, status, destination);
+                                         @RequestParam(required = false) String destination,
+                                         @RequestParam(required = false) String client, @RequestParam(required = false) String subRoute,
+                                         @RequestParam(required = false) Long shippingRouteId, @RequestParam(required = false) Long manifestId,
+                                         @RequestParam(required = false) String folio) {
+        ReportService.Filter f = new ReportService.Filter(from, to, senderId, shiftId, courierId, status, destination, client, subRoute,
+                shippingRouteId, manifestId, folio);
         List<Map<String, Object>> rows = service.guideRows(f);
         ReportService.Summary s = service.summary(f);
         String title = "Periodo " + s.from() + " a " + s.to();

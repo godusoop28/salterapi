@@ -25,10 +25,11 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class ReportExporter {
+    /** Columnas del reporte de guías. No incluye LPN/DPN (identificadores de bulto), por solicitud del cliente. */
     static final String[] KEYS = {"folio", "status", "created_at", "confirmed_at", "sender_name", "rcpt_name", "rcpt_city",
-            "rcpt_state", "cd_reference", "order_reference", "package_count", "shift", "created_by", "courier"};
-    static final String[] HEADERS = {"Folio", "Estado", "Elaborada", "Confirmada", "Remitente", "Destinatario", "Ciudad",
-            "Estado (entidad)", "Ref. CD", "Pedido", "Bultos", "Turno", "Elaboró", "Repartidor"};
+            "rcpt_state", "shipping_route", "sub_route", "manifest", "order_reference", "orders", "package_count", "shift", "created_by", "courier"};
+    static final String[] HEADERS = {"Folio", "Estado", "Elaborada", "Confirmada", "Remitente", "Cliente", "Ciudad",
+            "Estado (entidad)", "Ruta de embarque", "Subruta", "Manifiesto", "Pedido(s)", "Núm. pedidos", "Piezas", "Turno", "Elaboró", "Operador"};
 
     public byte[] csv(List<Map<String, Object>> rows) {
         StringBuilder sb = new StringBuilder("﻿");
@@ -93,7 +94,7 @@ public class ReportExporter {
         k.addCell(PdfSupport.labeled("Incidencias", String.valueOf(s.incidentsCreated())));
         doc.add(k);
         doc.add(PdfSupport.section("Detalle (" + rows.size() + " guías)"));
-        int[] cols = {0, 1, 2, 4, 5, 6, 8, 10, 11, 13};
+        int[] cols = {0, 1, 2, 4, 5, 8, 9, 10, 12, 13, 15, 16};
         PdfPTable t = new PdfPTable(cols.length);
         t.setWidthPercentage(100);
         t.setHeaderRows(1);

@@ -48,7 +48,7 @@ class FlujoOperativoTest extends IntegrationTestBase {
         assertThat(call(POST, "/api/guides", rec, guideBody("Sin permiso", true)).status()).isEqualTo(403);
         // Los roles eliminados ya no existen
         assertThat(call(GET, "/api/roles", admin, null).body().findValuesAsText("code"))
-                .containsExactlyInAnyOrder("ADMIN", "REMITENTE", "RECEPCION", "REPARTIDOR");
+                .containsExactlyInAnyOrder("ADMIN", "REMITENTE", "RECEPCION", "REPARTIDOR", "OPERACIONES", "ENCARGADO");
     }
 
     @Test
@@ -120,7 +120,7 @@ class FlujoOperativoTest extends IntegrationTestBase {
                 "newRecipient", Map.of("firstName", "Jaime Arturo", "lastName", "Avelar Morales",
                         "address", Map.of("street", "Nicolas Bravo 204", "city", "Jojutla", "state", "Morelos"), "saveToCatalog", false),
                 "items", List.of(Map.of("description", "Caja", "quantity", 8, "weightKg", 10)),
-                "packageCount", 8, "cdReference", "CVA-01",
+                "packageCount", 8, "subRoute", "CVA-01",
                 "shipping", Map.of("destinationCode", "oax", "dimensions", "30 x 20 x 15", "serviceType", "ORDINARIO"),
                 "confirm", true));
         Res g = call(POST, "/api/guides", sup, body);
@@ -204,6 +204,13 @@ class FlujoOperativoTest extends IntegrationTestBase {
         assertThat(call(POST, "/api/manifests", sup, Map.of("operationDate", "2026-11-10", "guideIds", List.of(g1))).status()).isEqualTo(422);
         man = call(POST, "/api/manifests/" + mid + "/close?version=" + man.body().get("version").asLong(), sup, null);
         assertThat(status(cap, g1)).isEqualTo("LISTA_SALIDA");
+
+        // Sin autorización del encargado no se despacha
+        assertThat(call(POST, "/api/manifests/" + mid + "/dispatch", sup, Map.of("version", man.body().get("version").asLong())).body()
+                .get("code").asText()).isEqualTo("NOT_AUTHORIZED");
+        man = call(POST, "/api/manifests/" + mid + "/authorize", sup, Map.of("notes", "Revisado", "version", man.body().get("version").asLong()));
+        assertThat(man.status()).isEqualTo(200);
+        assertThat(man.body().get("authorization").get("authorizedBy").get("name").asText()).isNotBlank();
 
         // Dos despachos simultáneos: sólo uno procede
         long version = man.body().get("version").asLong();

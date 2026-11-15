@@ -14,11 +14,14 @@ public final class SenderDtos {
 
     public record SenderDto(Long id, String code, String name, Sender.Kind kind, String contactName, String phone,
                             String email, AddressDto address, String notes, String plazaCode, String guidePrefix,
-                            String effectiveGuidePrefix, boolean active, Instant createdAt, long version) {
+                            String effectiveGuidePrefix, mx.salter.api.auth.AuthDtos.Ref defaultShippingRoute,
+                            boolean active, Instant createdAt, long version) {
         public static SenderDto of(Sender s) {
+            var r = s.getDefaultShippingRoute();
             return new SenderDto(s.getId(), s.getCode(), s.getName(), s.getKind(), s.getContactName(), s.getPhone(),
                     s.getEmail(), AddressDto.of(s.getAddress()), s.getNotes(), s.getPlazaCode(), s.getGuidePrefix(),
-                    GuidePrefix.of(s), s.isActive(), s.getCreatedAt(), s.getVersion());
+                    GuidePrefix.of(s), r == null ? null : new mx.salter.api.auth.AuthDtos.Ref(r.getId(), r.label()),
+                    s.isActive(), s.getCreatedAt(), s.getVersion());
         }
     }
 
@@ -33,6 +36,8 @@ public final class SenderDtos {
             @Size(max = 500) String notes,
             @Pattern(regexp = "^([A-Za-z]{2,5})?$", message = "Plaza: 2 a 5 letras (ej. PBA)") String plazaCode,
             @Pattern(regexp = "^([A-Za-z]{2,6})?$", message = "Siglas del folio: 2 a 6 letras (ej. ATM)") String guidePrefix,
+            /** Ruta de embarque predeterminada (opcional). */
+            Long defaultShippingRouteId,
             Boolean active,
             Long version) {}
 }

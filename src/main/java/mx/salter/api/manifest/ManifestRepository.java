@@ -13,19 +13,24 @@ import org.springframework.data.repository.query.Param;
 
 public interface ManifestRepository extends JpaRepository<Manifest, Long> {
 
-    @EntityGraph(attributePaths = {"shift", "sender", "createdBy"})
+    @EntityGraph(attributePaths = {"shift", "sender", "createdBy", "shippingRoute"})
     @Query("""
             select m from Manifest m
             where (:status is null or m.status = :status)
               and (:shiftId is null or m.shift.id = :shiftId)
               and (:senderId is null or m.sender.id = :senderId)
+              and (:routeId is null or m.shippingRoute.id = :routeId)
               and m.operationDate >= :from and m.operationDate <= :to
             """)
     Page<Manifest> search(@Param("status") Manifest.Status status, @Param("shiftId") Long shiftId,
-                          @Param("senderId") Long senderId, @Param("from") LocalDate from, @Param("to") LocalDate to,
-                          Pageable pageable);
+                          @Param("senderId") Long senderId, @Param("routeId") Long routeId,
+                          @Param("from") LocalDate from, @Param("to") LocalDate to, Pageable pageable);
 
-    @EntityGraph(attributePaths = {"shift", "sender", "createdBy", "closedBy", "guides", "guides.guide"})
+    /** Manifiesto en preparación de una ruta (a lo más uno, por índice único parcial). */
+    @Query("select m from Manifest m where m.shippingRoute.id = :routeId and m.status = mx.salter.api.manifest.Manifest.Status.BORRADOR")
+    Optional<Manifest> findOpenByRoute(@Param("routeId") Long routeId);
+
+    @EntityGraph(attributePaths = {"shift", "sender", "createdBy", "closedBy", "authorizedBy", "shippingRoute", "guides", "guides.guide"})
     @Query("select m from Manifest m where m.id = :id")
     Optional<Manifest> findDetailed(@Param("id") Long id);
 

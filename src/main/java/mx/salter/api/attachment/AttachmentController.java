@@ -54,11 +54,13 @@ public class AttachmentController {
     private final GuideAccess access;
     private final AuditService audit;
     private final FileStorage storage;
+    private final mx.salter.api.recipient.RecipientService recipients;
     private final long maxBytes;
     private final Set<String> allowed;
 
     public AttachmentController(AttachmentRepository repo, GuideRepository guides, IncidentRepository incidents, GuideAccess access,
-                                AuditService audit, FileStorage storage, @Value("${salter.uploads.max-bytes:5242880}") long maxBytes,
+                                AuditService audit, FileStorage storage, mx.salter.api.recipient.RecipientService recipients,
+                                @Value("${salter.uploads.max-bytes:5242880}") long maxBytes,
                                 @Value("${salter.uploads.allowed-types:image/jpeg,image/png,image/webp,application/pdf}") String allowed) {
         this.repo = repo;
         this.guides = guides;
@@ -66,6 +68,7 @@ public class AttachmentController {
         this.access = access;
         this.audit = audit;
         this.storage = storage;
+        this.recipients = recipients;
         this.maxBytes = maxBytes;
         this.allowed = Arrays.stream(allowed.split(",")).map(String::trim).collect(Collectors.toSet());
     }
@@ -131,6 +134,13 @@ public class AttachmentController {
 
     private void requireOwnerAccess(Attachment.OwnerType type, Long ownerId, boolean write) {
         SalterPrincipal p = CurrentUser.get();
+        if (type == Attachment.OwnerType.RECIPIENT) {
+            // Foto del local de entrega: mismo alcance que el catálogo de destinatarios.
+            if (!p.hasAny(Permission.RECIPIENTS_VIEW, Permission.RECIPIENTS_MANAGE)) throw ApiException.notFound("Destinatario");
+            recipients.requireAccessible(ownerId);
+            if (write && !p.has(Permission.RECIPIENTS_MANAGE)) throw ApiException.forbidden("No puedes adjuntar archivos a este destinatario.");
+            return;
+        }
         Guide g;
         if (type == Attachment.OwnerType.GUIDE) {
             g = guides.findById(ownerId).orElseThrow(() -> ApiException.notFound("Guía"));

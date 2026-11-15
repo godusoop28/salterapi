@@ -47,22 +47,24 @@ public class ManifestController {
                                                   @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                                   @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                                   @RequestParam(required = false) String q,
+                                                  @RequestParam(required = false) Long shippingRouteId,
                                                   @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer size) {
-        return service.eligible(shiftId, senderId, from, to, q, page, size);
+        return service.eligible(shiftId, senderId, from, to, q, shippingRouteId, page, size);
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyAuthority('MANIFESTS_VIEW','MANIFESTS_MANAGE','DISPATCH_AUTHORIZE')")
+    @PreAuthorize("hasAnyAuthority('MANIFESTS_VIEW','MANIFESTS_MANAGE','DISPATCH_AUTHORIZE','DISPATCH_REGISTER')")
     public PageResponse<ManifestSummaryDto> search(@RequestParam(required = false) Manifest.Status status,
                                                    @RequestParam(required = false) Long shiftId, @RequestParam(required = false) Long senderId,
+                                                   @RequestParam(required = false) Long shippingRouteId,
                                                    @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                                    @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                                    @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer size) {
-        return service.search(status, shiftId, senderId, from, to, page, size);
+        return service.search(status, shiftId, senderId, shippingRouteId, from, to, page, size);
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyAuthority('MANIFESTS_VIEW','MANIFESTS_MANAGE','DISPATCH_AUTHORIZE')")
+    @PreAuthorize("hasAnyAuthority('MANIFESTS_VIEW','MANIFESTS_MANAGE','DISPATCH_AUTHORIZE','DISPATCH_REGISTER')")
     public ManifestDto get(@PathVariable Long id) {
         return service.get(id);
     }
@@ -99,15 +101,29 @@ public class ManifestController {
         return service.reopen(id, req.reason(), req.version());
     }
 
-    @PostMapping("/{id}/dispatch")
+    @PostMapping("/{id}/guides/{guideId}/travel")
+    @PreAuthorize("hasAuthority('MANIFESTS_MANAGE')")
+    @Operation(summary = "Viaja / No viaja de una guía del manifiesto en preparación (motivo obligatorio para «No viaja»).")
+    public ManifestDto travel(@PathVariable Long id, @PathVariable Long guideId, @Valid @RequestBody ManifestDtos.TravelRequest req) {
+        return service.setTravel(id, guideId, req);
+    }
+
+    @PostMapping("/{id}/authorize")
     @PreAuthorize("hasAuthority('DISPATCH_AUTHORIZE')")
-    @Operation(summary = "Autoriza la salida del manifiesto completo en una sola transacción.")
+    @Operation(summary = "Autorización de salida del encargado (requisito para registrar el despacho). No despacha.")
+    public ManifestDto authorize(@PathVariable Long id, @Valid @RequestBody ManifestDtos.AuthorizeRequest req) {
+        return service.authorize(id, req);
+    }
+
+    @PostMapping("/{id}/dispatch")
+    @PreAuthorize("hasAuthority('DISPATCH_REGISTER')")
+    @Operation(summary = "Registra la salida de un manifiesto AUTORIZADO: sólo las guías que viajan pasan a «En tránsito».")
     public ManifestDto dispatch(@PathVariable Long id, @Valid @RequestBody DispatchRequest req) {
         return service.dispatch(id, req);
     }
 
     @GetMapping(value = "/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
-    @PreAuthorize("hasAnyAuthority('MANIFESTS_VIEW','MANIFESTS_MANAGE','DISPATCH_AUTHORIZE')")
+    @PreAuthorize("hasAnyAuthority('MANIFESTS_VIEW','MANIFESTS_MANAGE','DISPATCH_AUTHORIZE','DISPATCH_REGISTER')")
     public ResponseEntity<byte[]> pdf(@PathVariable Long id) {
         ManifestPdfService.Rendered r = pdf.render(id);
         return ResponseEntity.ok()

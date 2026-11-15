@@ -151,6 +151,12 @@ public class RecipientService {
         r.setClientCode(Text.trimToNull(req.clientCode()));
         r.setRoute(Text.trimToNull(req.route()));
         r.setSubRoute(RecipientDtos.normalizeSubRoute(req.subRoute()));
+        if ((req.latitude() == null) != (req.longitude() == null)) {
+            throw ApiException.badRequest("INVALID_LOCATION", "Indica latitud y longitud juntas, o ninguna.");
+        }
+        r.setLatitude(req.latitude() == null ? null : req.latitude().setScale(6, java.math.RoundingMode.HALF_UP));
+        r.setLongitude(req.longitude() == null ? null : req.longitude().setScale(6, java.math.RoundingMode.HALF_UP));
+        r.setLocationVerified(req.latitude() != null && Boolean.TRUE.equals(req.locationVerified()));
     }
 
     /** 409 con la lista de coincidencias para que la interfaz las muestre. */

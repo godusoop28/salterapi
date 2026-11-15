@@ -61,6 +61,22 @@ public class Manifest extends Timestamped {
 
     private String notes;
 
+    /** Ruta de embarque del manifiesto (las guías confirmadas de esa ruta se agregan solas mientras esté en preparación). */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "shipping_route_id")
+    private mx.salter.api.route.ShippingRoute shippingRoute;
+
+    /** Autorización de salida del encargado (requisito para registrar el despacho). */
+    @Column(name = "authorized_at")
+    private Instant authorizedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "authorized_by")
+    private User authorizedBy;
+
+    @Column(name = "authorization_notes")
+    private String authorizationNotes;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "created_by")
     private User createdBy;
@@ -78,4 +94,9 @@ public class Manifest extends Timestamped {
 
     @Version
     private long version;
+
+    /** Guías que pertenecen actualmente al manifiesto (excluye el historial de las que no viajaron). */
+    public java.util.List<ManifestGuide> activeGuides() {
+        return guides.stream().filter(ManifestGuide::isActive).toList();
+    }
 }

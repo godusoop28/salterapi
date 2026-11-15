@@ -22,8 +22,8 @@ import org.hibernate.annotations.CreationTimestamp;
 @Getter
 @Setter
 public class Attachment {
-    public enum OwnerType { GUIDE, INCIDENT }
-    public enum Category { EVIDENCIA_ENTREGA, FIRMA, INCIDENCIA, DOCUMENTO }
+    public enum OwnerType { GUIDE, INCIDENT, RECIPIENT }
+    public enum Category { EVIDENCIA_ENTREGA, FIRMA, INCIDENCIA, DOCUMENTO, FACHADA }
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

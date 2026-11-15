@@ -17,7 +17,12 @@ public enum MovementType {
     LIBERACION("Guía liberada"),
     CORRECCION("Corrección auditada"),
     CANCELACION("Guía cancelada"),
-    NOTA("Observación");
+    NOTA("Observación"),
+    CAMBIO_RUTA("Cambio de ruta de embarque"),
+    MANIFIESTO_ASIGNADO("Agregada al manifiesto en preparación"),
+    MANIFIESTO_RETIRADA("Retirada del manifiesto en preparación"),
+    NO_VIAJA("Marcada como «No viaja»"),
+    VIAJA("Marcada como «Viaja»");
 
     private final String label;
 

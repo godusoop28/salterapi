@@ -62,6 +62,16 @@ public class Recipient extends Timestamped {
     @Column(name = "sub_route")
     private String subRoute;
 
+    /** Ubicación del local de entrega (opcional). Sólo se marca verificada cuando la confirma personal autorizado. */
+    @Column(precision = 9, scale = 6)
+    private java.math.BigDecimal latitude;
+
+    @Column(precision = 9, scale = 6)
+    private java.math.BigDecimal longitude;
+
+    @Column(name = "location_verified", nullable = false)
+    private boolean locationVerified;
+
     @Column(name = "search_text", nullable = false)
     private String searchText;
 

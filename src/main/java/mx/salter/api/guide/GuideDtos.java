@@ -6,7 +6,6 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -39,7 +38,13 @@ public final class GuideDtos {
             @Size(max = 300) String description,
             @NotNull @DecimalMin(value = "0.01", message = "La cantidad debe ser mayor a cero") BigDecimal quantity,
             @Size(max = 30) String unit,
-            @DecimalMin(value = "0.0", message = "El peso no puede ser negativo") BigDecimal weightKg) {}
+            @DecimalMin(value = "0.0", message = "El peso no puede ser negativo") BigDecimal weightKg,
+            /** Descripción opcional del renglón; no reemplaza al tipo de bulto. */
+            @Size(max = 300) String detail) {
+        public ItemInput(Long conceptId, String description, BigDecimal quantity, String unit, BigDecimal weightKg) {
+            this(conceptId, description, quantity, unit, weightKg, null);
+        }
+    }
 
     /** Datos de traslado que se plasman en la guía: PBA → OAX, dimensiones, servicio y fecha compromiso. */
     public record ShippingInput(
@@ -48,7 +53,15 @@ public final class GuideDtos {
             @Size(max = 60) String dimensions,
             @Size(max = 30) String serviceType,
             /** Si se omite se calcula con los días del tipo de servicio (configuración guide.services). */
-            LocalDate commitmentDate) {}
+            LocalDate commitmentDate,
+            /** «No aplica»: el peso no corresponde (el documento imprime NO APLICA). */
+            Boolean weightNotApplicable,
+            /** «No aplica»: las dimensiones no corresponden (el documento imprime NO APLICA). */
+            Boolean dimensionsNotApplicable) {
+        public ShippingInput(String originCode, String destinationCode, String dimensions, String serviceType, LocalDate commitmentDate) {
+            this(originCode, destinationCode, dimensions, serviceType, commitmentDate, null, null);
+        }
+    }
 
     public record GuideRequest(
             /** Identificador generado por el cliente para evitar guías duplicadas por doble envío. */
@@ -57,17 +70,33 @@ public final class GuideDtos {
             Long shiftId,
             Long recipientId,
             @Valid NewRecipientInput newRecipient,
+            /** Referencia CD (documento de origen). No es la subruta. */
             @Size(max = 80) String cdReference,
             @Size(max = 80) String orderReference,
+            /**
+             * Piezas declaradas (opcional). Las piezas se calculan como la suma de los bultos; si se envía y no coincide
+             * con esa suma la solicitud se rechaza (PACKAGE_COUNT_MISMATCH).
+             */
             @Min(1) @Max(9999) Integer packageCount,
             @Valid ShippingInput shipping,
-            @NotEmpty(message = "Agrega al menos un concepto de mercancía") @Size(max = 50) List<@Valid ItemInput> items,
+            /** Bultos de la guía (carrito): tipo/concepto, cantidad, descripción y peso. En borrador puede ir vacío. */
+            @Size(max = 50, message = "Máximo 50 renglones de bultos") List<@Valid ItemInput> items,
             @Size(max = 1000) String notes,
             /** Confirmar inmediatamente (requiere permiso GUIDES_CONFIRM). */
             boolean confirm,
             Long version,
             /** Generar aunque el número de pedido ya esté en otra guía vigente del remitente. */
-            boolean allowDuplicateOrder) {}
+            boolean allowDuplicateOrder,
+            /** Subruta del cliente (ej. CVA-01). Si se omite y el cliente es del catálogo, se toma de su registro. */
+            @Size(max = 20) String subRoute,
+            /** Ruta de embarque. Si se omite se usa la predeterminada del remitente. */
+            Long shippingRouteId,
+            /** Obligatorio si la ruta elegida es distinta de la predeterminada (requiere ROUTES_REASSIGN). */
+            @Size(max = 500) String routeChangeReason) {
+        public GuideRequest {
+            items = items == null ? List.of() : items;
+        }
+    }
 
     public record ReasonRequest(@NotBlank(message = "Indica el motivo") @Size(max = 500) String reason) {}
 
@@ -82,16 +111,24 @@ public final class GuideDtos {
             @Valid ShippingInput shipping,
             @Size(max = 50) List<@Valid ItemInput> items,
             @Size(max = 1000) String notes,
-            @NotNull Long version) {}
+            @NotNull Long version,
+            @Size(max = 20) String subRoute) {}
 
     public record GuideFilter(String q, List<GuideStatus> status, Long senderId, Long shiftId, Long courierId,
-                              Boolean mine, LocalDate from, LocalDate to, Boolean withoutManifest, String folio) {}
+                              Boolean mine, LocalDate from, LocalDate to, Boolean withoutManifest, String folio,
+                              String subRoute, Long shippingRouteId, Long manifestId, String client) {
+        public GuideFilter(String q, List<GuideStatus> status, Long senderId, Long shiftId, Long courierId,
+                           Boolean mine, LocalDate from, LocalDate to, Boolean withoutManifest, String folio) {
+            this(q, status, senderId, shiftId, courierId, mine, from, to, withoutManifest, folio, null, null, null, null);
+        }
+    }
 
     // ─────────── Salida ───────────
 
     public record PartyDto(String name, String contact, String phone, String email, AddressDto address, String clientCode) {}
 
-    public record ItemDto(Long id, int position, Long conceptId, String description, BigDecimal quantity, String unit, BigDecimal weightKg) {}
+    public record ItemDto(Long id, int position, Long conceptId, String description, BigDecimal quantity, String unit, BigDecimal weightKg,
+                          String detail) {}
 
     public record MovementDto(Long id, MovementType type, String typeLabel, GuideStatus fromStatus, GuideStatus toStatus,
                               String toStatusLabel, String userName, Instant occurredAt, String location, String notes,
@@ -103,9 +140,12 @@ public final class GuideDtos {
     }
 
     public record ShippingDto(String originCode, String destinationCode, String dimensions, String serviceType,
-                              LocalDate commitmentDate) {}
+                              LocalDate commitmentDate, boolean weightNotApplicable, boolean dimensionsNotApplicable) {}
 
-    public record ManifestRef(Long id, String number, String status) {}
+    public record ManifestRef(Long id, String number, String status, boolean travels, Ref shippingRoute) {}
+
+    /** Bulto original (LPN) con su tipo y pedido. */
+    public record PackageDto(String lpn, String type, String order) {}
 
     public record AssignmentDto(Long courierId, String courierName, String courierPhone, Instant assignedAt, Integer routeOrder) {}
 
@@ -116,16 +156,18 @@ public final class GuideDtos {
 
     public record GuideSummaryDto(Long id, String folio, String reference, GuideStatus status, String statusLabel,
                                   Long senderId, String senderName, Long recipientId, String recipientName, String recipientPhone,
-                                  String recipientCity, String cdReference, String orderReference, int packageCount,
-                                  String originCode, String destinationCode, Ref shift, Ref createdBy, Instant createdAt, Instant confirmedAt, long version) {}
+                                  String recipientCity, String cdReference, String orderReference, Integer packageCount,
+                                  String originCode, String destinationCode, Ref shift, Ref createdBy, Instant createdAt, Instant confirmedAt, long version,
+                                  String subRoute, Ref shippingRoute) {}
 
     public record GuideDto(Long id, String folio, String reference, GuideStatus status, String statusLabel,
                            Long senderId, PartyDto sender, Long recipientId, boolean recipientOneTime, PartyDto recipient,
-                           Ref shift, String cdReference, String orderReference, int packageCount, BigDecimal totalWeightKg,
+                           Ref shift, String cdReference, String orderReference, Integer packageCount, BigDecimal totalWeightKg,
                            ShippingDto shipping, String notes, List<ItemDto> items, Ref createdBy, Instant createdAt, Instant updatedAt,
                            Instant confirmedAt, Ref confirmedBy, Instant cancelledAt, Ref cancelledBy, String cancelReason,
                            ManifestRef manifest, AssignmentDto assignment, ReceptionDto reception, DeliveryDto delivery,
-                           Long openIncidentId, List<MovementDto> movements, List<String> allowedActions, long version) {}
+                           Long openIncidentId, List<MovementDto> movements, List<String> allowedActions, long version,
+                           String subRoute, Ref shippingRoute, List<PackageDto> packages, Long importBatchId) {}
 
     public record CreateResult(GuideDto guide, boolean created) {}
 }

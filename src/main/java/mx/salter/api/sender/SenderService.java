@@ -21,10 +21,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class SenderService {
     private final SenderRepository repo;
     private final AuditService audit;
+    private final mx.salter.api.route.RouteService routes;
 
-    public SenderService(SenderRepository repo, AuditService audit) {
+    public SenderService(SenderRepository repo, AuditService audit, mx.salter.api.route.RouteService routes) {
         this.repo = repo;
         this.audit = audit;
+        this.routes = routes;
     }
 
     /** Remitente al que el usuario tiene acceso; valida el alcance de usuarios restringidos. */
@@ -107,6 +109,7 @@ public class SenderService {
         s.setNotes(Text.trimToNull(req.notes()));
         s.setPlazaCode(upper(req.plazaCode()));
         s.setGuidePrefix(upper(req.guidePrefix()));
+        s.setDefaultShippingRoute(req.defaultShippingRouteId() == null ? null : routes.requireActive(req.defaultShippingRouteId()));
     }
 
     private static String upper(String v) {

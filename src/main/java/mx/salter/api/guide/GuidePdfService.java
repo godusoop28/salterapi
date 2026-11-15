@@ -38,13 +38,13 @@ import org.springframework.transaction.annotation.Transactional;
  * Guía con el FORMATO OFICIAL del cliente (boceto "GUIA SALTER.xls"):
  * <pre>
  *  PBA ⇒ OAX                      [logo]
- *  REMITENTE  CIUDAD ESTADO
+ *  AUTO TODO MEXICANA          (sólo el nombre del remitente)
  *  ───────────────────────────────────────
  *  C O N S I G N A T A R I O
  *  NOMBRE                 FECHA        10/11/26
  *  CALLE                  PESO            10 KG
  *  CIUDAD ESTADO          DIMENSIONES  30X20X15
- *  8 P I E Z A S                   C V A - 0 1
+ *  8 P I E Z A S                   C V A - 0 1   (subruta)
  *  ───────────────────────────────────────
  *  [ código PDF417 ]
  *  ┌ A T M   0 0 0 0 0 0 0 0 1 ───────────┐
@@ -53,11 +53,20 @@ import org.springframework.transaction.annotation.Transactional;
  *  ─────────────          ─────────────
  *   N O M B R E               F I R M A
  * </pre>
- * Tamaño (pdf.guide.pageSize: LETTER o LABEL_4X6) y copias (pdf.guide.copies) configurables.
+ * Tamaño (pdf.guide.pageSize: LETTER o LABEL_4X6, o el parámetro size) y copias (pdf.guide.copies) configurables.
+ *
+ * <p>Dos presentaciones con la MISMA lógica de generación:
+ * <ul>
+ *   <li>{@link Variant#CLIENTE}: para el cliente. NO incluye nombre, domicilio ni teléfono de quien recibe, ni los campos
+ *       de nombre y firma de recepción. Tampoco en metadatos, nombre de archivo ni código de barras.</li>
+ *   <li>{@link Variant#INTERNA}: documento operativo completo (consignatario y firmas) para personal autorizado.</li>
+ * </ul>
  */
 @Service
 public class GuidePdfService {
     public record Rendered(String filename, byte[] bytes) {}
+
+    public enum Variant { CLIENTE, INTERNA }
 
     private static final DateTimeFormatter SHORT = DateTimeFormatter.ofPattern("dd/MM/yy", Locale.forLanguageTag("es-MX"));
     private static final Color ARROW_FILL = new Color(0xDC, 0xEB, 0xF7);
@@ -81,13 +90,31 @@ public class GuidePdfService {
 
     @Transactional
     public Rendered render(Long id, SalterPrincipal p) {
+        return render(id, p, Variant.CLIENTE, null);
+    }
+
+    /** Quién puede obtener la versión INTERNA (con datos de quien recibe): personal operativo. */
+    public boolean canSeeInternal(SalterPrincipal p, Guide g) {
+        return p.hasAny(mx.salter.api.security.Permission.GUIDES_VIEW_ALL, mx.salter.api.security.Permission.DELIVERIES_ANY,
+                mx.salter.api.security.Permission.RECEPTION_CONFIRM) || access.isAssignedCourier(p, g);
+    }
+
+    @Transactional
+    public Rendered render(Long id, SalterPrincipal p, Variant variant, String sizeParam) {
         Guide g = guides.findDetailed(id).orElseThrow(() -> ApiException.notFound("Guía"));
         access.requireView(p, g);
         if (g.getStatus() == GuideStatus.BORRADOR || g.getStatus() == GuideStatus.CANCELADA) {
             throw ApiException.business("PDF_NOT_AVAILABLE", "El documento sólo está disponible para guías confirmadas.");
         }
+        Variant v = variant == null ? Variant.CLIENTE : variant;
+        if (v == Variant.INTERNA && !canSeeInternal(p, g)) {
+            throw ApiException.forbidden("La versión interna (con datos de quien recibe) es sólo para personal operativo.");
+        }
         int copies = Math.max(1, Math.min(4, parseInt(settings.get("pdf.guide.copies", "1"), 1)));
-        String size = settings.get("pdf.guide.pageSize", "LETTER").trim();
+        String size = (sizeParam == null || sizeParam.isBlank() ? settings.get("pdf.guide.pageSize", "LETTER") : sizeParam).trim();
+        if (!size.equalsIgnoreCase("LETTER") && !size.equalsIgnoreCase("LABEL_4X6")) {
+            throw ApiException.badRequest("INVALID_SIZE", "Tamaño no válido. Usa LETTER (carta) o LABEL_4X6 (etiqueta 4×6).");
+        }
         boolean label = "LABEL_4X6".equalsIgnoreCase(size);
         Rectangle page = label ? new Rectangle(288, 432) : PdfSupport.pageSize(size);
         float side = label ? 10 : Math.max(20, (page.getWidth() - LETTER_WIDTH) / 2);
@@ -103,14 +130,14 @@ public class GuidePdfService {
         Layout l = new Layout(width / LETTER_WIDTH);
         for (int c = 0; c < copies; c++) {
             if (c > 0 && label) doc.newPage();
-            PdfPTable sheet = sheet(writer, g, l, width);
+            PdfPTable sheet = sheet(writer, g, l, width, v);
             sheet.setKeepTogether(true);
             if (c > 0) sheet.setSpacingBefore(28 * l.k);
             doc.add(sheet);
         }
         doc.close();
-        audit.record("GUIDE_PDF", "GUIDE", g.getId(), Map.of("folio", g.getFolio()));
-        return new Rendered("guia-" + g.getFolio() + ".pdf", out.toByteArray());
+        audit.record("GUIDE_PDF", "GUIDE", g.getId(), Map.of("folio", g.getFolio(), "variant", v.name(), "size", size.toUpperCase()));
+        return new Rendered("guia-" + g.getFolio() + (v == Variant.CLIENTE ? "-cliente" : "-interna") + ".pdf", out.toByteArray());
     }
 
     /** Fuentes escaladas al ancho disponible (carta = 1.0). */
@@ -133,16 +160,16 @@ public class GuidePdfService {
         }
     }
 
-    private PdfPTable sheet(PdfWriter writer, Guide g, Layout l, float width) {
+    private PdfPTable sheet(PdfWriter writer, Guide g, Layout l, float width, Variant v) {
         PdfPTable t = new PdfPTable(1);
         t.setTotalWidth(width);
         t.setLockedWidth(true);
         t.addCell(plain(header(writer, g, l)));
-        t.addCell(plain(consignee(g, l)));
+        t.addCell(plain(consignee(g, l, v)));
         t.addCell(plain(pieces(g, l)));
         t.addCell(plain(barcode(g, l, width)));
         t.addCell(plain(folioBox(g, l)));
-        t.addCell(plain(signatures(l)));
+        if (v == Variant.INTERNA) t.addCell(plain(signatures(l)));
         return t;
     }
 
@@ -166,8 +193,9 @@ public class GuidePdfService {
         route.addCell(arrow);
         route.addCell(text(code(g.getDestinationCode()), l.route, Element.ALIGN_LEFT, Rectangle.NO_BORDER));
         left.addElement(route);
-        String origin = Text.join(g.getSenderCity(), g.getSenderState());
-        Paragraph sender = new Paragraph(up(g.getSenderName()) + (origin.isEmpty() ? "" : "    " + up(origin) + "."), l.sender);
+        // Sólo el nombre del remitente (ej. AUTO TODO MEXICANA). La ciudad/estado del remitente se conserva en la base,
+        // pero no se imprime: duplicaba "PUEBLA PUEBLA" junto a la plaza de origen.
+        Paragraph sender = new Paragraph(up(g.getSenderName()), l.sender);
         sender.setLeading(10.5f * l.k);
         left.addElement(sender);
         t.addCell(left);
@@ -222,32 +250,41 @@ public class GuidePdfService {
         }
     }
 
-    // ── 2. Consignatario + fecha, peso, dimensiones ──
-    private PdfPTable consignee(Guide g, Layout l) {
+    // ── 2. Consignatario (sólo versión interna) + fecha, peso, dimensiones ──
+    private PdfPTable consignee(Guide g, Layout l, Variant v) {
         PdfPTable t = new PdfPTable(new float[]{1.25f, 0.6f, 0.55f});
         t.setWidthPercentage(100);
-        PdfPCell title = text(spaced("CONSIGNATARIO."), l.caps, Element.ALIGN_LEFT, Rectangle.NO_BORDER);
+        boolean internal = v == Variant.INTERNA;
+        PdfPCell title = text(spaced(internal ? "CONSIGNATARIO." : "DATOS DEL ENVÍO."), l.caps, Element.ALIGN_LEFT, Rectangle.NO_BORDER);
         title.setColspan(3);
         title.setPaddingLeft(28 * l.k);
         title.setPaddingTop(8 * l.k);
         title.setPaddingBottom(8 * l.k);
         t.addCell(title);
 
-        String line1 = up(g.getRcptClientCode() == null ? g.getRcptName() : "#" + g.getRcptClientCode() + "  " + g.getRcptName());
-        String line2 = up(Text.join(g.getRcptStreet(), g.getRcptNeighborhood() == null ? null : "COL. " + g.getRcptNeighborhood()));
-        String line3 = up(Text.join(g.getRcptCity(), g.getRcptState(), g.getRcptZip() == null ? null : "C.P. " + g.getRcptZip()));
+        String line1, line2, line3;
+        if (internal) {
+            line1 = up(g.getRcptClientCode() == null ? g.getRcptName() : "#" + g.getRcptClientCode() + "  " + g.getRcptName());
+            line2 = up(Text.join(g.getRcptStreet(), g.getRcptNeighborhood() == null ? null : "COL. " + g.getRcptNeighborhood()));
+            line3 = up(Text.join(g.getRcptCity(), g.getRcptState(), g.getRcptZip() == null ? null : "C.P. " + g.getRcptZip()));
+        } else {
+            // Versión cliente: sólo datos operativos, sin nombre, domicilio ni contacto de quien recibe.
+            line1 = "DESTINO " + code(g.getDestinationCode());
+            line2 = g.getOrderReference() == null ? "" : "PEDIDO " + up(g.getOrderReference());
+            line3 = g.getShippingRoute() == null ? "" : "RUTA DE EMBARQUE " + up(g.getShippingRoute().getCode());
+        }
         LocalDate date = g.getConfirmedAt() == null ? null : g.getConfirmedAt().atZone(zone).toLocalDate();
         String[][] rows = {
                 {line1, "FECHA", date == null ? "" : SHORT.format(date)},
-                {line2, "PESO", weight(g.getTotalWeightKg())},
-                {line3, "DIMENSIONES", up(g.getDimensions())},
+                {line2, "PESO", g.isWeightNotApplicable() ? NOT_APPLICABLE : weight(g.getTotalWeightKg())},
+                {line3, "DIMENSIONES", g.isDimensionsNotApplicable() ? NOT_APPLICABLE : up(g.getDimensions())},
         };
         for (String[] r : rows) {
             t.addCell(text(r[0], l.body, Element.ALIGN_LEFT, Rectangle.NO_BORDER));
             t.addCell(text(r[1], l.body, Element.ALIGN_RIGHT, Rectangle.NO_BORDER));
             t.addCell(text(r[2], l.body, Element.ALIGN_RIGHT, Rectangle.NO_BORDER));
         }
-        if (g.getRcptPhone() != null) {
+        if (internal && g.getRcptPhone() != null) {
             PdfPCell tel = text("TEL. " + g.getRcptPhone(), l.body, Element.ALIGN_LEFT, Rectangle.NO_BORDER);
             tel.setColspan(3);
             t.addCell(tel);
@@ -255,13 +292,13 @@ public class GuidePdfService {
         return t;
     }
 
-    // ── 3. Piezas y clave CD ──
+    // ── 3. Piezas y SUBRUTA (CVA-01) ──
     private PdfPTable pieces(Guide g, Layout l) {
         PdfPTable t = new PdfPTable(new float[]{1.25f, 1f});
         t.setWidthPercentage(100);
         Phrase p = new Phrase();
-        p.add(new Chunk(g.getPackageCount() + "  ", l.pieceNum));
-        Chunk word = new Chunk(g.getPackageCount() == 1 ? "PIEZA" : "PIEZAS", l.pieceTxt);
+        p.add(new Chunk(g.pieces() + "  ", l.pieceNum));
+        Chunk word = new Chunk(piecesWord(g.pieces()), l.pieceTxt);
         word.setCharacterSpacing(4 * l.k);
         p.add(word);
         PdfPCell left = new PdfPCell(p);
@@ -269,9 +306,9 @@ public class GuidePdfService {
         left.setHorizontalAlignment(Element.ALIGN_CENTER);
         left.setPaddingBottom(4 * l.k);
         t.addCell(left);
-        Chunk cd = new Chunk(up(g.getCdReference()).replace("-", "–"), l.cd);
-        cd.setCharacterSpacing(4 * l.k);
-        PdfPCell right = new PdfPCell(new Phrase(cd));
+        Chunk sub = new Chunk(up(g.getSubRoute()), l.cd);
+        sub.setCharacterSpacing(4 * l.k);
+        PdfPCell right = new PdfPCell(new Phrase(sub));
         right.setBorder(Rectangle.BOTTOM);
         right.setHorizontalAlignment(Element.ALIGN_LEFT);
         right.setVerticalAlignment(Element.ALIGN_TOP);
@@ -287,7 +324,7 @@ public class GuidePdfService {
         PdfPCell c;
         try {
             BarcodePDF417 bc = new BarcodePDF417();
-            bc.setText(barcodeContent(g, zone).getBytes(StandardCharsets.ISO_8859_1));
+            bc.setText(GuideBarcode.encode(g, zone).getBytes(StandardCharsets.ISO_8859_1));
             bc.setErrorLevel(5);
             Image img = bc.getImage();
             img.scaleAbsolute(width * 0.9f, 88 * l.k);
@@ -304,12 +341,16 @@ public class GuidePdfService {
         return t;
     }
 
-    /** Contenido del PDF417: FOLIO|ORIGEN|DESTINO|PIEZAS|PESO|FECHA|CLAVE CD (la primera parte siempre es el folio). */
+    /** Contenido del PDF417 (ver {@link GuideBarcode}: versionado, sin datos personales, folio primero). */
     static String barcodeContent(Guide g, ZoneId zone) {
-        String date = g.getConfirmedAt() == null ? "" : DateTimeFormatter.BASIC_ISO_DATE.format(g.getConfirmedAt().atZone(zone));
-        String w = g.getTotalWeightKg() == null ? "" : g.getTotalWeightKg().stripTrailingZeros().toPlainString();
-        return String.join("|", g.getFolio(), nz(g.getOriginCode()), nz(g.getDestinationCode()),
-                String.valueOf(g.getPackageCount()), w, date, ascii(nz(g.getCdReference())));
+        return GuideBarcode.encode(g, zone);
+    }
+
+    static final String NOT_APPLICABLE = "NO APLICA";
+
+    /** 1 → "PIEZA", otro → "PIEZAS". */
+    static String piecesWord(int n) {
+        return n == 1 ? "PIEZA" : "PIEZAS";
     }
 
     // ── 5. Folio, servicio y fecha compromiso ──

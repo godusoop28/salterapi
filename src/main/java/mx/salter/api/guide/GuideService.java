@@ -83,6 +83,9 @@ public class GuideService {
     private final IncidentRepository incidents;
     private final SettingsService settings;
     private final AuditService audit;
+    private final mx.salter.api.manifest.ManifestPlanner planner;
+    private final mx.salter.api.route.RouteService routeService;
+    private final GuidePackageRepository packages;
     private final Clock clock;
     private final ZoneId zone;
 
@@ -91,7 +94,8 @@ public class GuideService {
                         ShiftRepository shifts, ConceptRepository concepts, UserRepository users,
                         ManifestGuideRepository manifestGuides, AssignmentRepository assignments, ReceptionRepository receptions,
                         DeliveryRepository deliveries, IncidentRepository incidents, SettingsService settings, AuditService audit,
-                        Clock clock, ZoneId zone) {
+                        mx.salter.api.manifest.ManifestPlanner planner, mx.salter.api.route.RouteService routeService,
+                        GuidePackageRepository packages, Clock clock, ZoneId zone) {
         this.guides = guides;
         this.movements = movements;
         this.fsm = fsm;
@@ -110,6 +114,9 @@ public class GuideService {
         this.incidents = incidents;
         this.settings = settings;
         this.audit = audit;
+        this.planner = planner;
+        this.routeService = routeService;
+        this.packages = packages;
         this.clock = clock;
         this.zone = zone;
     }
@@ -190,11 +197,14 @@ public class GuideService {
         snapshotSender(g, s);
         g.setShift(resolveShift(req.shiftId()));
         applyRecipient(g, s, req.recipientId(), req.newRecipient());
-        applyDetails(g, req.cdReference(), req.orderReference(), req.packageCount(), req.items(), req.notes());
+        applyDetails(g, req.cdReference(), req.orderReference(), req.subRoute(), req.packageCount(), req.items(), req.notes(),
+                req.shipping() != null && Boolean.TRUE.equals(req.shipping().weightNotApplicable()));
         applyShipping(g, s, req.shipping(), false);
         applyRecipientDefaults(g);
+        Map<String, Object> routeChange = applyRoute(g, s, req.shippingRouteId(), req.routeChangeReason());
         guides.saveAndFlush(g);
         fsm.record(g, MovementType.CREACION, null, null, null);
+        if (routeChange != null) fsm.record(g, MovementType.CAMBIO_RUTA, req.routeChangeReason(), null, routeChange);
         audit.record("GUIDE_CREATED", "GUIDE", g.getId(), Map.of("senderId", s.getId(), "oneTimeRecipient", g.isRcptOneTime()));
         if (req.confirm()) doConfirm(g);
         return new CreateResult(toDto(g), true);
@@ -221,10 +231,16 @@ public class GuideService {
         snapshotSender(g, s);
         if (req.shiftId() != null) g.setShift(resolveShift(req.shiftId()));
         applyRecipient(g, s, req.recipientId(), req.newRecipient());
-        applyDetails(g, req.cdReference(), req.orderReference(), req.packageCount(), req.items(), req.notes());
+        applyDetails(g, req.cdReference(), req.orderReference(), req.subRoute(), req.packageCount(), req.items(), req.notes(),
+                req.shipping() != null && Boolean.TRUE.equals(req.shipping().weightNotApplicable()));
         applyShipping(g, s, req.shipping(), false);
         applyRecipientDefaults(g);
+        Long previousRoute = g.getShippingRoute() == null ? null : g.getShippingRoute().getId();
+        Map<String, Object> routeChange = applyRoute(g, s, req.shippingRouteId(), req.routeChangeReason());
         fsm.record(g, MovementType.EDICION, null, null, null);
+        if (routeChange != null && !Objects.equals(previousRoute, g.getShippingRoute() == null ? null : g.getShippingRoute().getId())) {
+            fsm.record(g, MovementType.CAMBIO_RUTA, req.routeChangeReason(), null, routeChange);
+        }
         if (req.confirm()) doConfirm(g);
         guides.flush();
         return toDto(g);
@@ -263,6 +279,9 @@ public class GuideService {
         }
         g.setConfirmedBy(users.getReferenceById(CurrentUser.get().userId()));
         audit.record("GUIDE_CONFIRMED", "GUIDE", g.getId(), Map.of("folio", g.getFolio()));
+        guides.flush();
+        // Se incorpora al manifiesto EN PREPARACIÓN de su ruta de embarque (no lo cierra ni lo despacha).
+        planner.attach(g);
     }
 
     @Transactional
@@ -273,7 +292,7 @@ public class GuideService {
         if (!ownDraft && !p.has(Permission.GUIDES_CANCEL)) {
             throw ApiException.forbidden("No tienes permiso para cancelar esta guía.");
         }
-        manifestGuides.findByGuideId(g.getId()).ifPresent(mg -> {
+        manifestGuides.findByGuideIdAndActiveTrue(g.getId()).ifPresent(mg -> {
             throw ApiException.business("IN_MANIFEST", "La guía pertenece al manifiesto " + mg.getManifest().getNumber()
                     + ". Retírala del manifiesto antes de cancelarla.");
         });
@@ -298,7 +317,7 @@ public class GuideService {
      */
     @Transactional
     public GuideDto correct(Long id, CorrectionRequest req) {
-        CurrentUser.require(Permission.GUIDES_CORRECT);
+        requireAdminCorrection(CurrentUser.get());
         Guide g = lockAccessible(id);
         checkVersion(g, req.version());
         if (g.getStatus() != GuideStatus.CONFIRMADA) {
@@ -315,10 +334,15 @@ public class GuideService {
         applyDetails(g,
                 req.cdReference() != null ? req.cdReference() : g.getCdReference(),
                 req.orderReference() != null ? req.orderReference() : g.getOrderReference(),
-                req.packageCount() != null ? req.packageCount() : g.getPackageCount(),
+                req.subRoute() != null ? req.subRoute() : g.getSubRoute(),
+                req.packageCount(),
                 req.items() != null && !req.items().isEmpty() ? req.items() : null,
-                req.notes() != null ? req.notes() : g.getNotes());
+                req.notes() != null ? req.notes() : g.getNotes(),
+                req.shipping() != null && req.shipping().weightNotApplicable() != null ? req.shipping().weightNotApplicable() : g.isWeightNotApplicable());
         if (req.shipping() != null) applyShipping(g, g.getSender(), req.shipping(), true);
+        if (g.getPackageCount() == null || g.getPackageCount() <= 0) {
+            throw ApiException.business("INVALID_PIECES", "La guía confirmada debe conservar al menos una pieza.");
+        }
         Map<String, Object> after = snapshotForAudit(g);
         Map<String, Object> diff = new LinkedHashMap<>();
         for (String k : after.keySet()) {
@@ -329,6 +353,79 @@ public class GuideService {
         audit.record("GUIDE_CORRECTED", "GUIDE", g.getId(), Map.of("reason", req.reason(), "changes", diff));
         guides.flush();
         return toDto(g);
+    }
+
+    /**
+     * Regla del cliente: después de confirmada, SÓLO el Administrador corrige una guía. No basta el permiso
+     * GUIDES_CORRECT concedido a otro rol: se exige además el rol ADMIN.
+     */
+    static void requireAdminCorrection(SalterPrincipal p) {
+        if (!"ADMIN".equals(p.roleCode()) || !p.has(Permission.GUIDES_CORRECT)) {
+            throw ApiException.forbidden("Sólo el administrador puede corregir guías confirmadas.");
+        }
+    }
+
+    /**
+     * Cambio de ruta de embarque de una guía: requiere ROUTES_REASSIGN y motivo. Si la guía está en un manifiesto
+     * en preparación, se mueve al de la nueva ruta; si su manifiesto ya se cerró o salió, se rechaza.
+     * Queda en el historial (ruta anterior, nueva, quién, cuándo y motivo).
+     */
+    @Transactional
+    public GuideDto changeRoute(Long id, mx.salter.api.route.RouteDtos.RouteChangeRequest req) {
+        SalterPrincipal p = CurrentUser.get();
+        if (!p.has(Permission.ROUTES_REASSIGN)) throw ApiException.forbidden("No tienes permiso para cambiar guías de ruta.");
+        Guide g = lockAccessible(id);
+        checkVersion(g, req.version());
+        if (g.getStatus() != GuideStatus.BORRADOR && g.getStatus() != GuideStatus.CONFIRMADA && g.getStatus() != GuideStatus.RETENIDA) {
+            throw ApiException.business("ROUTE_LOCKED", "La guía está «" + g.getStatus().getLabel() + "»: ya no se puede cambiar de ruta.");
+        }
+        mx.salter.api.route.ShippingRoute to = routeService.requireActive(req.shippingRouteId());
+        mx.salter.api.route.ShippingRoute from = g.getShippingRoute();
+        if (from != null && from.getId().equals(to.getId())) throw ApiException.business("NO_CHANGES", "La guía ya está en la ruta " + to.getCode() + ".");
+        String oldManifest = planner.detach(g, req.reason());
+        g.setShippingRoute(to);
+        guides.flush();
+        Map<String, Object> meta = routeMeta(from, to, req.reason());
+        if (oldManifest != null) meta.put("manifiestoAnterior", oldManifest);
+        if (g.getStatus() == GuideStatus.CONFIRMADA) {
+            planner.attach(g).ifPresent(m -> meta.put("manifiestoNuevo", m.getNumber()));
+        }
+        fsm.record(g, MovementType.CAMBIO_RUTA, req.reason(), null, meta);
+        audit.record("GUIDE_ROUTE_CHANGED", "GUIDE", g.getId(), meta);
+        guides.flush();
+        return toDto(g);
+    }
+
+    private static Map<String, Object> routeMeta(mx.salter.api.route.ShippingRoute from, mx.salter.api.route.ShippingRoute to, String reason) {
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("rutaAnterior", from == null ? "Sin ruta" : from.label());
+        meta.put("rutaNueva", to == null ? "Sin ruta" : to.label());
+        if (reason != null && !reason.isBlank()) meta.put("motivo", reason.trim());
+        return meta;
+    }
+
+    /**
+     * Ruta de embarque de la guía: la predeterminada del remitente o la elegida. Elegir una distinta de la
+     * predeterminada es un CAMBIO DE RUTA: exige ROUTES_REASSIGN y motivo.
+     *
+     * @return metadatos del cambio para el historial, o null si se usó la ruta predeterminada
+     */
+    private Map<String, Object> applyRoute(Guide g, Sender s, Long requestedId, String reason) {
+        mx.salter.api.route.ShippingRoute def = s.getDefaultShippingRoute();
+        if (requestedId == null) {
+            g.setShippingRoute(def);
+            return null;
+        }
+        mx.salter.api.route.ShippingRoute chosen = routeService.requireActive(requestedId);
+        g.setShippingRoute(chosen);
+        if (def == null || def.getId().equals(chosen.getId())) return null;
+        if (!CurrentUser.get().has(Permission.ROUTES_REASSIGN)) {
+            throw ApiException.forbidden("No tienes autorización para cambiar la ruta de embarque predeterminada (" + def.getCode() + ").");
+        }
+        if (reason == null || reason.isBlank()) {
+            throw ApiException.badRequest("ROUTE_REASON_REQUIRED", "Indica el motivo del cambio de ruta de embarque.");
+        }
+        return routeMeta(def, chosen, reason);
     }
 
     @Transactional
@@ -426,7 +523,7 @@ public class GuideService {
                 throw ApiException.forbidden("No tienes permiso para guardar destinatarios en el catálogo.");
             }
             RecipientDto created = recipientService.create(new RecipientRequest(s.getId(), nr.firstName(), nr.lastName(), nr.phone(),
-                    nr.email(), nr.address(), null, null, null, null, nr.allowProbableDuplicate(), null));
+                    nr.email(), nr.address(), null, null, null, null, nr.allowProbableDuplicate(), null, null, null, null));
             g.setRecipient(recipients.getReferenceById(created.id()));
             g.setRcptOneTime(false);
         } else {
@@ -439,13 +536,17 @@ public class GuideService {
         applyRcptAddress(g, nr.address() == null ? new Address() : nr.address().toEntity());
     }
 
-    /** Con un destinatario del catálogo, la Clave CD y la plaza destino salen de su subruta (ej. CVA-01 → CVA) si no se capturaron. */
+    /**
+     * Con un destinatario del catálogo, la SUBRUTA (ej. CVA-01) y la plaza destino (CVA) salen de su registro si no se
+     * capturaron. La referencia CD es otro dato y no se autollena.
+     */
     private static void applyRecipientDefaults(Guide g) {
         if (g.getRecipient() == null) return;
         String sub = g.getRecipient().getSubRoute();
-        if (sub == null) return;
-        if (g.getCdReference() == null) g.setCdReference(sub);
-        if (g.getDestinationCode() == null) g.setDestinationCode(mx.salter.api.recipient.RecipientDtos.plazaOf(sub));
+        if (g.getSubRoute() == null && sub != null) g.setSubRoute(sub);
+        if (g.getDestinationCode() == null && g.getSubRoute() != null) {
+            g.setDestinationCode(mx.salter.api.recipient.RecipientDtos.plazaOf(g.getSubRoute()));
+        }
     }
 
     private static void applyRcptAddress(Guide g, Address a) {
@@ -457,11 +558,18 @@ public class GuideService {
         g.setRcptRefs(a.getReferences());
     }
 
-    private void applyDetails(Guide g, String cd, String order, Integer packageCount, List<ItemInput> items, String notes) {
+    /**
+     * Datos de la guía y su "carrito" de bultos. Las PIEZAS siempre son la suma de las cantidades de los bultos:
+     * no se asume 1 por defecto. Si se declara un total distinto a esa suma, se rechaza para que los totales nunca se
+     * contradigan.
+     */
+    private void applyDetails(Guide g, String cd, String order, String subRoute, Integer declaredPieces, List<ItemInput> items,
+                              String notes, boolean weightNotApplicable) {
         g.setCdReference(Text.trimToNull(cd));
         g.setOrderReference(Text.trimToNull(order));
-        g.setPackageCount(packageCount == null ? 1 : packageCount);
+        g.setSubRoute(mx.salter.api.recipient.RecipientDtos.normalizeSubRoute(subRoute));
         g.setNotes(Text.trimToNull(notes));
+        g.setWeightNotApplicable(weightNotApplicable);
         if (items != null) {
             List<GuideItem> list = new ArrayList<>();
             for (ItemInput in : items) {
@@ -475,15 +583,30 @@ public class GuideService {
                     if (desc == null) desc = c.getName();
                     if (unit == null) unit = c.getUnit();
                 }
-                if (desc == null) throw ApiException.badRequest("ITEM_DESCRIPTION", "Describe cada concepto de mercancía.");
+                if (desc == null) throw ApiException.badRequest("ITEM_DESCRIPTION", "Indica el tipo de bulto de cada renglón.");
+                if (in.quantity().stripTrailingZeros().scale() > 0) {
+                    throw ApiException.badRequest("ITEM_QUANTITY", "La cantidad de bultos debe ser un número entero (" + desc + ").");
+                }
                 it.setDescription(desc);
                 it.setUnit(unit == null ? "PIEZA" : unit.toUpperCase());
                 it.setQuantity(in.quantity());
-                it.setWeightKg(in.weightKg());
+                it.setWeightKg(weightNotApplicable ? null : in.weightKg());
+                it.setDetail(Text.truncate(Text.trimToNull(in.detail()), 300));
                 list.add(it);
             }
             g.replaceItems(list);
+        } else if (weightNotApplicable) {
+            g.getItems().forEach(i -> i.setWeightKg(null));
         }
+        if (weightNotApplicable) g.setTotalWeightKg(null);
+        int sum = g.getItems().stream().mapToInt(i -> i.getQuantity().intValue()).sum();
+        Integer pieces = g.getItems().isEmpty() ? null : sum;
+        if (declaredPieces != null && pieces != null && !declaredPieces.equals(pieces)) {
+            throw ApiException.business("PACKAGE_COUNT_MISMATCH", "Las piezas declaradas (" + declaredPieces
+                    + ") no coinciden con la suma de los bultos (" + pieces + ").").with("declared", declaredPieces).with("sum", pieces);
+        }
+        if (pieces != null && pieces > 9999) throw ApiException.badRequest("TOO_MANY_PIECES", "Máximo 9999 piezas por guía.");
+        g.setPackageCount(pieces);
     }
 
     /** Tipos de servicio configurados (guide.services = "ORDINARIO:1,EXPRESS:0") con sus días para la fecha compromiso. */
@@ -523,9 +646,11 @@ public class GuideService {
         if (!services.containsKey(service)) {
             throw ApiException.badRequest("INVALID_SERVICE", "Tipo de servicio no válido. Opciones: " + String.join(", ", services.keySet()) + ".");
         }
+        boolean dimsNa = in.dimensionsNotApplicable() != null ? in.dimensionsNotApplicable() : merge && g.isDimensionsNotApplicable();
         g.setOriginCode(origin);
         g.setDestinationCode(dest);
-        g.setDimensions(dims == null ? null : dims.toUpperCase());
+        g.setDimensionsNotApplicable(dimsNa);
+        g.setDimensions(dimsNa || dims == null ? null : dims.toUpperCase());
         g.setServiceType(service);
         if (in.commitmentDate() != null || !merge) g.setCommitmentDate(in.commitmentDate());
     }
@@ -546,7 +671,8 @@ public class GuideService {
     private void validateForConfirmation(Guide g) {
         List<String> missing = new ArrayList<>();
         if (g.getRcptName() == null || g.getRcptName().isBlank()) missing.add("nombre del destinatario");
-        if (g.getItems().isEmpty()) missing.add("conceptos de mercancía");
+        if (g.getItems().isEmpty()) missing.add("bultos (tipo y cantidad)");
+        else if (g.getPackageCount() == null || g.getPackageCount() <= 0) missing.add("cantidad de piezas");
         for (String field : settings.get("guide.requiredFields", "").split(",")) {
             String f = field.trim();
             if (f.isEmpty()) continue;
@@ -561,8 +687,9 @@ public class GuideService {
                 case "orderReference" -> g.getOrderReference();
                 case "originCode" -> g.getOriginCode();
                 case "destinationCode" -> g.getDestinationCode();
-                case "dimensions" -> g.getDimensions();
-                case "totalWeight" -> g.getTotalWeightKg() == null ? null : g.getTotalWeightKg().toPlainString();
+                case "dimensions" -> g.isDimensionsNotApplicable() ? "NO APLICA" : g.getDimensions();
+                case "totalWeight" -> g.isWeightNotApplicable() ? "NO APLICA" : g.getTotalWeightKg() == null ? null : g.getTotalWeightKg().toPlainString();
+                case "subRoute" -> g.getSubRoute();
                 default -> "n/a";
             };
             if (value == null || value.isBlank()) missing.add(FIELD_LABELS.getOrDefault(f, f));
@@ -581,6 +708,7 @@ public class GuideService {
             Map.entry("rcptState", "estado del destinatario"),
             Map.entry("rcptZip", "código postal del destinatario"),
             Map.entry("cdReference", "referencia CD"),
+            Map.entry("subRoute", "subruta"),
             Map.entry("orderReference", "referencia de pedido"),
             Map.entry("originCode", "plaza de origen"),
             Map.entry("destinationCode", "plaza de destino"),
@@ -597,15 +725,18 @@ public class GuideService {
         m.put("estado", g.getRcptState());
         m.put("cp", g.getRcptZip());
         m.put("referenciaCD", g.getCdReference());
+        m.put("subruta", g.getSubRoute());
         m.put("pedido", g.getOrderReference());
-        m.put("bultos", g.getPackageCount());
+        m.put("piezas", g.getPackageCount());
+        m.put("peso", g.isWeightNotApplicable() ? "NO APLICA" : g.getTotalWeightKg());
         m.put("origen", g.getOriginCode());
         m.put("destino", g.getDestinationCode());
-        m.put("dimensiones", g.getDimensions());
+        m.put("dimensiones", g.isDimensionsNotApplicable() ? "NO APLICA" : g.getDimensions());
         m.put("servicio", g.getServiceType());
         m.put("fechaCompromiso", g.getCommitmentDate());
         m.put("notas", g.getNotes());
-        m.put("conceptos", g.getItems().stream().map(i -> i.getQuantity().stripTrailingZeros().toPlainString() + " " + i.getUnit() + " " + i.getDescription()).toList());
+        m.put("conceptos", g.getItems().stream().map(i -> i.getQuantity().stripTrailingZeros().toPlainString() + " " + i.getDescription()
+                + (i.getDetail() == null ? "" : " (" + i.getDetail() + ")")).toList());
         return m;
     }
 
@@ -655,12 +786,16 @@ public class GuideService {
                 g.getRcptName(), g.getRcptPhone(), g.getRcptCity(), g.getCdReference(), g.getOrderReference(), g.getPackageCount(),
                 g.getOriginCode(), g.getDestinationCode(), g.getShift() == null ? null : new Ref(g.getShift().getId(), g.getShift().getName()),
                 new Ref(g.getCreatedBy().getId(), g.getCreatedBy().getFullName()),
-                g.getCreatedAt(), g.getConfirmedAt(), g.getVersion());
+                g.getCreatedAt(), g.getConfirmedAt(), g.getVersion(), g.getSubRoute(), routeRef(g.getShippingRoute()));
+    }
+
+    static Ref routeRef(mx.salter.api.route.ShippingRoute r) {
+        return r == null ? null : new Ref(r.getId(), r.label());
     }
 
     public GuideDto toDto(Guide g) {
         SalterPrincipal p = CurrentUser.get();
-        var mg = manifestGuides.findByGuideId(g.getId()).orElse(null);
+        var mg = manifestGuides.findByGuideIdAndActiveTrue(g.getId()).orElse(null);
         var asg = assignments.findByGuideIdAndActiveTrue(g.getId()).orElse(null);
         var rec = receptions.findByGuideId(g.getId()).orElse(null);
         var del = deliveries.findByGuideId(g.getId()).orElse(null);
@@ -675,13 +810,15 @@ public class GuideService {
                         new AddressDto(g.getRcptStreet(), g.getRcptNeighborhood(), g.getRcptCity(), g.getRcptState(), g.getRcptZip(), g.getRcptRefs()), g.getRcptClientCode()),
                 g.getShift() == null ? null : new Ref(g.getShift().getId(), g.getShift().getName()),
                 g.getCdReference(), g.getOrderReference(), g.getPackageCount(), g.getTotalWeightKg(),
-                new ShippingDto(g.getOriginCode(), g.getDestinationCode(), g.getDimensions(), g.getServiceType(), g.getCommitmentDate()),
+                new ShippingDto(g.getOriginCode(), g.getDestinationCode(), g.getDimensions(), g.getServiceType(), g.getCommitmentDate(),
+                        g.isWeightNotApplicable(), g.isDimensionsNotApplicable()),
                 g.getNotes(),
                 g.getItems().stream().map(i -> new ItemDto(i.getId(), i.getPosition(), i.getConceptId(), i.getDescription(),
-                        i.getQuantity(), i.getUnit(), i.getWeightKg())).toList(),
+                        i.getQuantity(), i.getUnit(), i.getWeightKg(), i.getDetail())).toList(),
                 ref(g.getCreatedBy()), g.getCreatedAt(), g.getUpdatedAt(), g.getConfirmedAt(), ref(g.getConfirmedBy()),
                 g.getCancelledAt(), ref(g.getCancelledBy()), g.getCancelReason(),
-                mg == null ? null : new ManifestRef(mg.getManifest().getId(), mg.getManifest().getNumber(), mg.getManifest().getStatus().name()),
+                mg == null ? null : new ManifestRef(mg.getManifest().getId(), mg.getManifest().getNumber(), mg.getManifest().getStatus().name(),
+                        mg.isTravels(), routeRef(mg.getManifest().getShippingRoute())),
                 asg == null ? null : new AssignmentDto(asg.getCourier().getId(), asg.getCourier().getName(), asg.getCourier().getPhone(),
                         asg.getAssignedAt(), asg.getRouteOrder()),
                 rec == null ? null : new ReceptionDto(rec.getReceivedAt(), rec.getReceivedBy(), rec.getLocation(), rec.getReceivedCount(),
@@ -694,7 +831,10 @@ public class GuideService {
                                 m.getToStatus().getLabel(), null, m.getOccurredAt(), m.getLocation(), m.getNotes(), null)
                                 : MovementDto.of(m))
                         .toList(),
-                allowedActions(p, g, mg != null, asg != null), g.getVersion());
+                allowedActions(p, g, mg != null, asg != null), g.getVersion(), g.getSubRoute(), routeRef(g.getShippingRoute()),
+                packages.findByGuideIdOrderByIdAsc(g.getId()).stream()
+                        .map(x -> new GuideDtos.PackageDto(x.getLpn(), x.getPackageType(), x.getOrderNumber())).toList(),
+                g.getImportBatchId());
     }
 
     private static Ref ref(User u) {
@@ -708,7 +848,11 @@ public class GuideService {
         if (s == GuideStatus.BORRADOR && (own || p.has(Permission.GUIDES_VIEW_ALL)) && p.has(Permission.GUIDES_CREATE)) a.add("EDIT");
         if (s == GuideStatus.BORRADOR && p.has(Permission.GUIDES_CONFIRM) && (own || p.has(Permission.GUIDES_VIEW_ALL))) a.add("CONFIRM");
         if (s.canTransitionTo(GuideStatus.CANCELADA) && !inManifest && (p.has(Permission.GUIDES_CANCEL) || (own && s == GuideStatus.BORRADOR))) a.add("CANCEL");
-        if (s == GuideStatus.CONFIRMADA && p.has(Permission.GUIDES_CORRECT)) a.add("CORRECT");
+        if (s == GuideStatus.CONFIRMADA && "ADMIN".equals(p.roleCode()) && p.has(Permission.GUIDES_CORRECT)) a.add("CORRECT");
+        if ((s == GuideStatus.BORRADOR || s == GuideStatus.CONFIRMADA || s == GuideStatus.RETENIDA) && p.has(Permission.ROUTES_REASSIGN)
+                && (!inManifest || manifestGuides.findByGuideIdAndActiveTrue(g.getId()).map(x -> x.getManifest().getStatus() == mx.salter.api.manifest.Manifest.Status.BORRADOR).orElse(true))) {
+            a.add("CHANGE_ROUTE");
+        }
         if (s.canTransitionTo(GuideStatus.RETENIDA) && p.has(Permission.GUIDES_HOLD)) a.add("HOLD");
         if (s == GuideStatus.RETENIDA && p.has(Permission.GUIDES_HOLD)) a.add("RELEASE");
         if (s == GuideStatus.EN_TRANSITO && p.has(Permission.RECEPTION_CONFIRM)) a.add("RECEIVE");

@@ -97,10 +97,21 @@ public class Guide extends Timestamped {
     @Column(name = "rcpt_one_time", nullable = false) private boolean rcptOneTime;
     @Column(name = "rcpt_client_code") private String rcptClientCode;
 
+    /** Referencia CD (documento de origen). NO es la subruta. */
     @Column(name = "cd_reference") private String cdReference;
     @Column(name = "order_reference") private String orderReference;
-    @Column(name = "package_count", nullable = false) private int packageCount = 1;
+    /** Subruta del cliente al momento de elaborar la guía (ej. CVA-01): copia histórica. */
+    @Column(name = "sub_route") private String subRoute;
+    /** Ruta de EMBARQUE: determina el manifiesto de salida. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "shipping_route_id")
+    private mx.salter.api.route.ShippingRoute shippingRoute;
+    /** Número de piezas = suma de las cantidades de los bultos. Vacío mientras no se capturan (borrador). */
+    @Column(name = "package_count") private Integer packageCount;
     @Column(name = "total_weight_kg") private BigDecimal totalWeightKg;
+    @Column(name = "weight_not_applicable", nullable = false) private boolean weightNotApplicable;
+    @Column(name = "dimensions_not_applicable", nullable = false) private boolean dimensionsNotApplicable;
+    @Column(name = "import_batch_id") private Long importBatchId;
     // Formato oficial de guía (boceto del cliente)
     @Column(name = "origin_code") private String originCode;
     @Column(name = "destination_code") private String destinationCode;
@@ -144,7 +155,12 @@ public class Guide extends Timestamped {
     @PreUpdate
     void computeSearch() {
         searchText = Text.truncate(Text.normalize(Text.join(folio, rcptClientCode, rcptName, originCode, destinationCode, rcptPhone, rcptCity, rcptNeighborhood,
-                senderName, cdReference, orderReference)), 1200);
+                senderName, subRoute, cdReference, orderReference)), 1200);
+    }
+
+    /** Piezas como número (0 si aún no se capturan). */
+    public int pieces() {
+        return packageCount == null ? 0 : packageCount;
     }
 
     /** Referencia visible: folio si ya fue confirmada; si no, número interno de borrador. */

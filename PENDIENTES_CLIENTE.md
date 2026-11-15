@@ -29,7 +29,7 @@ claramente señalados; ninguno debe considerarse acuerdo definitivo hasta valida
 | 3 | Estados de guía | Borrador, Confirmada, Lista para salida, En tránsito, Recibida en destino, Entrega final confirmada, Con incidencia, Retenida, Cancelada | `GuideStatus` | Medio: migración de datos si cambian nombres |
 | 4 | Recepción antes de entrega | Obligatoria (`delivery.requireReception=true`) | Configuración | Bajo: con `false` se permite En tránsito → Entregada |
 | 5 | Estados de manifiesto | Borrador → Cerrado → Despachado; se puede reabrir si no salió | `Manifest.Status` | Medio |
-| 6 | Cerrar ≠ salir | Cerrar deja las guías "Listas para salida"; la salida requiere autorización aparte | `ManifestService.dispatch` | — (requisito explícito) |
+| 6 | Cerrar ≠ autorizar ≠ despachar | Cerrar (Operaciones) → autorizar (Encargado) → registrar despacho (Operaciones). El mismo usuario ADMIN puede hacer los tres | `ManifestService` | Confirmar si el autorizador debe ser distinto de quien cerró |
 | 7 | Manifiesto por remitente | Opcional (puede mezclar remitentes si no se indica) | `ManifestService.replaceGuides` | Bajo |
 | 8 | Capturista: confirmar guías | **No** por defecto; se concede por rol o por usuario | Usuarios → permisos | Ninguno (configurable) |
 | 9 | Capturista: importar | **No** por defecto; se concede por rol o por usuario | Usuarios → permisos | Ninguno (configurable) |
@@ -41,8 +41,21 @@ claramente señalados; ninguno debe considerarse acuerdo definitivo hasta valida
 | 15 | Correcciones | Sólo guías Confirmadas (antes de cerrar manifiesto), auditadas con antes/después | `GuideService.correct` | Medio |
 | 16 | Datos del rastreo público | Folio, estado, eventos genéricos, ciudad/estado destino | `TrackingController` | Bajo |
 | 17 | Asignación de repartidor | Opcional al despachar; también manual en cualquier estado no terminal | `AssignmentService` | Bajo |
-| 18 | Datos fiscales / QR / código de barras | Código **PDF417** con `FOLIO\|ORIGEN\|DESTINO\|PIEZAS\|PESO\|FECHA\|CLAVE CD`; sin datos fiscales | `GuidePdfService.barcodeContent` | Confirmar contenido si usarán lector específico |
-| 20 | Clave junto a piezas (`CVA-01`) | Se interpretó como la **clave CD** (`cd_reference`) | Formulario de guía → "Clave CD" | Confirmar significado |
+| 18 | Código de barras | PDF417 versionado `FOLIO\|V2\|ORIGEN\|DESTINO\|PIEZAS\|PESO\|FECHA\|SUBRUTA\|SERVICIO\|COMPROMISO`, sin datos personales; leído en pruebas con zxing | `GuideBarcode` | Probar con el lector físico que usarán |
+| 20 | Clave junto a piezas (`CVA-01`) | ✅ **Es la SUBRUTA** (confirmado). Columna propia `guides.sub_route` (V9); los valores que se habían copiado en `cd_reference` se movieron a `sub_route` | Formulario → "Subruta" | — |
 | 21 | Fecha compromiso | Fecha de confirmación + días del servicio (`guide.services` = `ORDINARIO:1,EXPRESS:0`); editable al capturar | Configuración | Confirmar días por servicio y si se excluyen domingos |
 | 22 | Plazas (PBA, OAX) | Texto de 2–5 letras; origen por defecto del remitente, destino obligatorio para confirmar | Remitente → "Plaza de origen" | Si hay catálogo oficial de plazas se puede convertir en lista |
 | 19 | Almacenamiento de archivos | Cloudinary (recursos privados) si existe `CLOUDINARY_URL`; si no, PostgreSQL. Máx. 5 MB | `FileStorage` | Bajo |
+
+## Decisiones de V9 (actualización integral)
+
+| # | Tema | Valor implementado | Dónde se cambia | Por confirmar |
+|---|---|---|---|---|
+| 23 | Manifiesto en preparación por ruta | Uno por ruta de embarque; incluye guías de cualquier fecha mientras esté abierto | Índice `ux_manifests_open_route` | Si debe partirse por fecha o turno |
+| 24 | Guías «No viaja» | No se despachan; al registrar la salida quedan en el historial del manifiesto y pasan al siguiente en preparación de su ruta | `ManifestService.dispatch` | — |
+| 25 | Gráfica del día del cliente | Guías **confirmadas hoy** (hora de México), sin canceladas | `ReportService.today` | Si debe ser «guías con movimiento hoy» |
+| 26 | Versión de la guía para cliente | Por defecto en todas las descargas; la interna sólo para personal operativo | `GuidePdfService.Variant` | Qué copia se pega en el bulto |
+| 27 | Formato del manifiesto | Plantilla PROVISIONAL mejorada (ruta, totales, viaja/no viaja, cambios de ruta, firmas) | `ManifestPdfService` | Ejemplo oficial del cliente |
+| 28 | DPN | No existe en el código ni en el importador; el reporte de guías no exporta identificadores de bulto (LPN/DPN) | `ReportExporter` | Confirmar en qué documento aparece el DPN |
+| 29 | Traslado entre locales / centros de reparto | NO implementado: no hay catálogo de centros. Hoy se cubre con cambio de ruta + asignación de operador | — | Definir centros y reglas |
+| 30 | Correspondencia manual de columnas del reporte de carga | El importador de guías detecta encabezados por sinónimos; si no los reconoce indica las columnas requeridas | `GuideImportService.findHeader` | Si llegarán reportes con otros encabezados |

@@ -62,9 +62,35 @@ public class GuideController {
                                                 @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
                                                 @RequestParam(required = false) Boolean withoutManifest,
                                                 @RequestParam(required = false) String folio,
+                                                @RequestParam(required = false) String subRoute,
+                                                @RequestParam(required = false) Long shippingRouteId,
+                                                @RequestParam(required = false) Long manifestId,
+                                                @RequestParam(required = false) String client,
                                                 @RequestParam(required = false) Integer page,
                                                 @RequestParam(required = false) Integer size) {
-        return service.search(new GuideFilter(q, status, senderId, shiftId, courierId, mine, from, to, withoutManifest, folio), page, size);
+        return service.search(new GuideFilter(q, status, senderId, shiftId, courierId, mine, from, to, withoutManifest, folio,
+                subRoute, shippingRouteId, manifestId, client), page, size);
+    }
+
+    public record BarcodeResult(GuideBarcode.Payload payload, Long guideId) {}
+
+    @GetMapping("/barcode")
+    @Operation(summary = "Interpreta el contenido leído del código PDF417 (V2 o anterior) y localiza la guía si está en tu alcance. "
+            + "El código no contiene datos personales: la información completa se obtiene con /by-folio.")
+    public BarcodeResult decodeBarcode(@RequestParam String code) {
+        GuideBarcode.Payload payload;
+        try {
+            payload = GuideBarcode.decode(code);
+        } catch (IllegalArgumentException e) {
+            throw ApiException.badRequest("INVALID_BARCODE", "El código leído está vacío o no es de una guía SALTER.");
+        }
+        Long id;
+        try {
+            id = service.getByFolio(payload.folio()).id();
+        } catch (ApiException e) {
+            id = null;
+        }
+        return new BarcodeResult(payload, id);
     }
 
     public record ServiceOption(String code, int days) {}
@@ -122,6 +148,22 @@ public class GuideController {
         return importer.preview(file, senderId);
     }
 
+    @PostMapping("/import/commit")
+    @PreAuthorize("hasAuthority('GUIDES_CREATE')")
+    @Operation(summary = "Genera las guías de la previsualización revisada. Una transacción por guía; reintentar con el mismo "
+            + "archivo no duplica. Devuelve qué se creó, omitió o rechazó.")
+    public GuideImportService.CommitResult importCommit(@Valid @RequestBody GuideImportService.CommitRequest req) {
+        if (req.confirm()) CurrentUser.require(mx.salter.api.security.Permission.GUIDES_CONFIRM);
+        return importer.commit(req);
+    }
+
+    @PostMapping("/{id}/route")
+    @PreAuthorize("hasAuthority('ROUTES_REASSIGN')")
+    @Operation(summary = "Cambia la ruta de embarque de la guía (motivo obligatorio; queda en el historial y en el manifiesto).")
+    public GuideDto changeRoute(@PathVariable Long id, @Valid @RequestBody mx.salter.api.route.RouteDtos.RouteChangeRequest req) {
+        return service.changeRoute(id, req);
+    }
+
     @PostMapping("/{id}/confirm")
     @PreAuthorize("hasAuthority('GUIDES_CONFIRM')")
     @Operation(summary = "Confirma un borrador y asigna el folio único.")
@@ -136,7 +178,7 @@ public class GuideController {
 
     @PostMapping("/{id}/corrections")
     @PreAuthorize("hasAuthority('GUIDES_CORRECT')")
-    @Operation(summary = "Corrección auditada de una guía confirmada (antes de quedar lista para salida).")
+    @Operation(summary = "Corrección auditada de una guía confirmada. SÓLO el Administrador (se valida rol y permiso en el servicio).")
     public GuideDto correct(@PathVariable Long id, @Valid @RequestBody CorrectionRequest req) {
         return service.correct(id, req);
     }
@@ -160,9 +202,12 @@ public class GuideController {
     }
 
     @GetMapping(value = "/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
-    @Operation(summary = "Documento de guía con plantilla PROVISIONAL.")
-    public ResponseEntity<byte[]> pdf(@PathVariable Long id) {
-        GuidePdfService.Rendered r = pdf.render(id, CurrentUser.get());
+    @Operation(summary = "Documento de guía (formato del cliente). variant=CLIENTE (sin datos de quien recibe, por defecto) o "
+            + "INTERNA (personal operativo); size=LETTER o LABEL_4X6.")
+    public ResponseEntity<byte[]> pdf(@PathVariable Long id,
+                                      @RequestParam(required = false, defaultValue = "CLIENTE") GuidePdfService.Variant variant,
+                                      @RequestParam(required = false) String size) {
+        GuidePdfService.Rendered r = pdf.render(id, CurrentUser.get(), variant, size);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename(r.filename()).build().toString())
                 .contentType(MediaType.APPLICATION_PDF)

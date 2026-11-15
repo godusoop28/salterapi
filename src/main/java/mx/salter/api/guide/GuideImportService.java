@@ -57,23 +57,88 @@ public class GuideImportService {
     private final RecipientRepository recipients;
     private final GuideRepository guides;
     private final GuideService guideService;
+    private final mx.salter.api.recipient.RecipientService recipientService;
+    private final GuideImportBatchRepository batches;
+    private final GuidePackageRepository packageRepo;
+    private final mx.salter.api.audit.AuditService audit;
+    private final org.springframework.transaction.support.TransactionTemplate tx;
 
-    public GuideImportService(SenderService senders, RecipientRepository recipients, GuideRepository guides, GuideService guideService) {
+    public GuideImportService(SenderService senders, RecipientRepository recipients, GuideRepository guides, GuideService guideService,
+                              mx.salter.api.recipient.RecipientService recipientService, GuideImportBatchRepository batches,
+                              GuidePackageRepository packageRepo, mx.salter.api.audit.AuditService audit,
+                              org.springframework.transaction.PlatformTransactionManager txManager) {
         this.senders = senders;
         this.recipients = recipients;
         this.guides = guides;
         this.guideService = guideService;
+        this.recipientService = recipientService;
+        this.batches = batches;
+        this.packageRepo = packageRepo;
+        this.audit = audit;
+        this.tx = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        this.tx.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     public record TypeCount(String name, int quantity) {}
 
+    /** Bulto del reporte: LPN, tipo y pedido (se conserva la relación original). */
+    public record PackageLine(String lpn, String type, String order) {}
+
     public record ImportGroup(String requestId, String clientName, List<String> orders, String addressText, AddressDto address,
                               int packages, List<TypeCount> types, List<String> lpns, String route, String notes,
                               String matchType, RecipientDto recipient, List<RecipientDto> suggestions,
-                              Long existingGuideId, String existingFolio, List<String> duplicateOrders) {}
+                              Long existingGuideId, String existingFolio, List<String> duplicateOrders,
+                              List<PackageLine> packageLines) {}
 
     public record ImportPreview(String fileName, Long senderId, String senderName, String load, String route,
-                                Integer declaredPackages, int totalPackages, String defaultDestination, List<ImportGroup> groups) {}
+                                Integer declaredPackages, int totalPackages, String defaultDestination, List<ImportGroup> groups,
+                                /** Identificador del archivo (carga o huella): agrupa las guías en un lote y evita duplicados. */
+                                String fileKey, Long defaultShippingRouteId) {}
+
+    // ─────────── Confirmación masiva ───────────
+
+    public record CommitItem(
+            @jakarta.validation.constraints.NotBlank(message = "Indica el tipo de bulto") @jakarta.validation.constraints.Size(max = 60) String type,
+            @jakarta.validation.constraints.NotNull @jakarta.validation.constraints.Min(value = 1, message = "La cantidad debe ser al menos 1")
+            @jakarta.validation.constraints.Max(9999) Integer quantity) {}
+
+    public record CommitPackage(@jakarta.validation.constraints.Size(max = 60) String lpn,
+                                @jakarta.validation.constraints.Size(max = 60) String type,
+                                @jakarta.validation.constraints.Size(max = 40) String order) {}
+
+    /** Renglón revisado (y posiblemente corregido) por el usuario en la previsualización. */
+    public record CommitGroup(
+            @jakarta.validation.constraints.NotBlank String requestId,
+            boolean include,
+            Long recipientId,
+            @jakarta.validation.constraints.NotBlank(message = "Falta el nombre del cliente") @jakarta.validation.constraints.Size(max = 120) String clientName,
+            @jakarta.validation.Valid AddressDto address,
+            @jakarta.validation.constraints.Size(max = 80) String orders,
+            @jakarta.validation.constraints.Size(max = 20) String route,
+            @jakarta.validation.constraints.Size(max = 20) String subRoute,
+            @jakarta.validation.constraints.Pattern(regexp = "^([A-Za-z]{2,5})?$", message = "Destino: 2 a 5 letras") String destinationCode,
+            Long shippingRouteId,
+            @jakarta.validation.constraints.Size(max = 500) String routeChangeReason,
+            @jakarta.validation.constraints.Size(max = 50) List<@jakarta.validation.Valid CommitItem> items,
+            @jakarta.validation.constraints.Size(max = 2000) List<@jakarta.validation.Valid CommitPackage> packages,
+            @jakarta.validation.constraints.Size(max = 1000) String notes,
+            boolean allowDuplicateOrder) {}
+
+    public record CommitRequest(
+            Long senderId,
+            @jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Size(max = 80) String fileKey,
+            @jakarta.validation.constraints.Size(max = 200) String fileName,
+            @jakarta.validation.constraints.Size(max = 60) String load,
+            Integer declaredPackages,
+            boolean confirm,
+            @jakarta.validation.constraints.NotEmpty @jakarta.validation.constraints.Size(max = 2000) List<@jakarta.validation.Valid CommitGroup> groups) {}
+
+    /** CREATED, SKIPPED_EXISTING (ya generada con este archivo), SKIPPED_DUPLICATE (pedido en otra guía), EXCLUDED, REJECTED. */
+    public record CommitRowResult(String requestId, String clientName, String outcome, String message, Long guideId, String folio,
+                                  int pieces, String warning) {}
+
+    public record CommitResult(Long batchId, int created, int skipped, int excluded, int rejected, Integer declaredPackages,
+                               int committedPieces, int excludedPieces, List<CommitRowResult> rows) {}
 
     /** Bloque del reporte: un cliente con un pedido y sus bultos. */
     private static final class Block {
@@ -130,12 +195,14 @@ public class GuideImportService {
             Block first = blocks.get(0);
             List<String> orders = blocks.stream().map(b -> b.order).filter(o -> o != null && !o.isBlank()).distinct().toList();
             List<String> lpns = new ArrayList<>();
+            List<PackageLine> lines = new ArrayList<>();
             Map<String, Integer> types = new LinkedHashMap<>();
             for (Block b : blocks) {
                 for (String[] pk : b.packages) {
                     if (pk[0] != null) lpns.add(pk[0]);
                     String type = pk[1] == null || pk[1].isBlank() ? "Bulto" : capitalize(pk[1]);
                     types.merge(type, 1, Integer::sum);
+                    lines.add(new PackageLine(pk[0], type, b.order));
                 }
             }
             int count = blocks.stream().mapToInt(b -> b.packages.size()).sum();
@@ -171,13 +238,149 @@ public class GuideImportService {
             groups.add(new ImportGroup(requestId.toString(), first.name, orders, addressText, parseAddress(addressText), count,
                     types.entrySet().stream().map(t -> new TypeCount(t.getKey(), t.getValue())).toList(), lpns, route, notes,
                     how, match == null ? null : RecipientDto.of(match), suggestions,
-                    existing.map(Guide::getId).orElse(null), existing.map(Guide::displayReference).orElse(null), dupOrders));
+                    existing.map(Guide::getId).orElse(null), existing.map(Guide::displayReference).orElse(null), dupOrders, lines));
         }
         groups.sort(Comparator.comparing(ImportGroup::clientName, String.CASE_INSENSITIVE_ORDER));
         String defaultDestination = destinations.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(null);
         int total = groups.stream().mapToInt(ImportGroup::packages).sum();
         return new ImportPreview(file.getOriginalFilename(), sender.getId(), sender.getName(), parsed.load, parsed.route,
-                parsed.declared, total, defaultDestination, groups);
+                parsed.declared, total, defaultDestination, groups, fileKey,
+                sender.getDefaultShippingRoute() == null ? null : sender.getDefaultShippingRoute().getId());
+    }
+
+    /**
+     * Convierte la previsualización REVISADA en guías reales. Cada guía se crea en su propia transacción (un renglón con
+     * error no revierte los demás) reutilizando todas las reglas de {@link GuideService#create} (folio, duplicados por
+     * pedido, idempotencia por clientRequestId, agrupación en manifiesto). Reintentar con el mismo archivo no duplica.
+     */
+    public CommitResult commit(CommitRequest req) {
+        SalterPrincipal p = CurrentUser.get();
+        Sender sender = senders.requireAccessible(req.senderId());
+        Long senderId = sender.getId();
+        Long batchId = tx.execute(st -> batches.findBySenderIdAndFileKey(senderId, req.fileKey()).map(GuideImportBatch::getId).orElseGet(() -> {
+            GuideImportBatch b = new GuideImportBatch();
+            b.setSenderId(senderId);
+            b.setFileKey(req.fileKey());
+            b.setFileName(Text.truncate(Text.trimToNull(req.fileName()), 200));
+            b.setLoadCode(Text.truncate(Text.trimToNull(req.load()), 60));
+            b.setDeclaredPackages(req.declaredPackages());
+            b.setCreatedBy(p.userId());
+            return batches.saveAndFlush(b).getId();
+        }));
+        boolean canCatalog = p.has(mx.salter.api.security.Permission.RECIPIENTS_MANAGE);
+        List<CommitRowResult> rows = new ArrayList<>();
+        int created = 0, skipped = 0, excluded = 0, rejected = 0, pieces = 0, excludedPieces = 0;
+        for (CommitGroup grp : req.groups()) {
+            int groupPieces = grp.items() == null ? 0 : grp.items().stream().mapToInt(i -> i.quantity() == null ? 0 : i.quantity()).sum();
+            if (!grp.include()) {
+                excluded++;
+                excludedPieces += groupPieces;
+                rows.add(new CommitRowResult(grp.requestId(), grp.clientName(), "EXCLUDED", "No seleccionada.", null, null, groupPieces, null));
+                continue;
+            }
+            CommitRowResult r = commitOne(req, grp, senderId, batchId, canCatalog, groupPieces);
+            rows.add(r);
+            switch (r.outcome()) {
+                case "CREATED" -> { created++; pieces += r.pieces(); }
+                case "SKIPPED_EXISTING", "SKIPPED_DUPLICATE" -> skipped++;
+                default -> rejected++;
+            }
+        }
+        int fc = created, fs = skipped, fr = rejected;
+        tx.executeWithoutResult(st -> audit.record("GUIDES_IMPORTED", "IMPORT_BATCH", batchId,
+                Map.of("created", fc, "skipped", fs, "rejected", fr, "fileKey", req.fileKey())));
+        return new CommitResult(batchId, created, skipped, excluded, rejected, req.declaredPackages(), pieces, excludedPieces, rows);
+    }
+
+    private CommitRowResult commitOne(CommitRequest req, CommitGroup grp, Long senderId, Long batchId, boolean canCatalog, int groupPieces) {
+        UUID requestId;
+        try {
+            requestId = UUID.fromString(grp.requestId());
+        } catch (IllegalArgumentException e) {
+            return new CommitRowResult(grp.requestId(), grp.clientName(), "REJECTED", "Identificador de renglón no válido.", null, null, groupPieces, null);
+        }
+        if (grp.items() == null || grp.items().isEmpty()) {
+            return new CommitRowResult(grp.requestId(), grp.clientName(), "REJECTED", "Agrega al menos un tipo de bulto con cantidad.", null, null, 0, null);
+        }
+        SalterPrincipal p = CurrentUser.get();
+        // Reintento del mismo usuario con el mismo archivo: devuelve la guía ya generada.
+        Optional<Guide> already = guides.findByCreatedByIdAndClientRequestId(p.userId(), requestId);
+        if (already.isPresent()) {
+            Guide g = already.get();
+            return new CommitRowResult(grp.requestId(), grp.clientName(), "SKIPPED_EXISTING", "Ya se había generado con este archivo.",
+                    g.getId(), g.getFolio(), g.pieces(), null);
+        }
+        try {
+            GuideDtos.GuideDto dto = tx.execute(st -> {
+                Long recipientId = grp.recipientId();
+                GuideDtos.NewRecipientInput oneTime = null;
+                if (recipientId == null) {
+                    if (canCatalog) {
+                        recipientId = createOrMatchRecipient(senderId, grp);
+                    } else {
+                        oneTime = new GuideDtos.NewRecipientInput(Text.truncate(grp.clientName().trim(), 120), null, null, null,
+                                grp.address(), false, true);
+                    }
+                }
+                List<GuideDtos.ItemInput> items = grp.items().stream()
+                        .map(i -> new GuideDtos.ItemInput(null, Text.truncate(i.type().trim(), 60), java.math.BigDecimal.valueOf(i.quantity()), "PIEZA", null))
+                        .toList();
+                GuideDtos.GuideRequest gr = new GuideDtos.GuideRequest(requestId, senderId, null, recipientId, oneTime, null,
+                        Text.truncate(Text.trimToNull(grp.orders()), 80), null,
+                        new GuideDtos.ShippingInput(null, Text.trimToNull(grp.destinationCode()), null, null, null),
+                        items, Text.truncate(Text.trimToNull(grp.notes()), 1000), req.confirm(), null, grp.allowDuplicateOrder(),
+                        grp.subRoute(), grp.shippingRouteId(), grp.routeChangeReason());
+                GuideDtos.CreateResult cr = guideService.create(gr);
+                if (cr.created()) {
+                    guides.findById(cr.guide().id()).ifPresent(g -> g.setImportBatchId(batchId));
+                    if (grp.packages() != null) {
+                        for (CommitPackage pk : grp.packages()) {
+                            String type = Text.trimToNull(pk.type());
+                            packageRepo.save(new GuidePackage(cr.guide().id(), Text.trimToNull(pk.lpn()), type == null ? "Bulto" : type,
+                                    Text.trimToNull(pk.order())));
+                        }
+                    }
+                }
+                return cr.guide();
+            });
+            String warning = grp.packages() != null && !grp.packages().isEmpty() && dto.packageCount() != null
+                    && grp.packages().size() != dto.packageCount()
+                    ? "El archivo trae " + grp.packages().size() + " LPN y la guía " + dto.packageCount() + " piezas." : null;
+            return new CommitRowResult(grp.requestId(), grp.clientName(), "CREATED", null, dto.id(), dto.folio(),
+                    dto.packageCount() == null ? 0 : dto.packageCount(), warning);
+        } catch (ApiException e) {
+            if ("DUPLICATE_ORDER".equals(e.getCode())) {
+                Object gs = e.getExtra().get("guides");
+                String ref = gs instanceof List<?> l && !l.isEmpty() && l.get(0) instanceof Map<?, ?> m ? String.valueOf(m.get("reference")) : null;
+                return new CommitRowResult(grp.requestId(), grp.clientName(), "SKIPPED_DUPLICATE", e.getMessage(), null, ref, groupPieces, null);
+            }
+            return new CommitRowResult(grp.requestId(), grp.clientName(), "REJECTED", e.getMessage(), null, null, groupPieces, null);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // Envío simultáneo del mismo renglón: la otra transacción ya lo creó.
+            Optional<Guide> again = guides.findByCreatedByIdAndClientRequestId(p.userId(), requestId);
+            if (again.isPresent()) {
+                return new CommitRowResult(grp.requestId(), grp.clientName(), "SKIPPED_EXISTING", "Ya se había generado.", again.get().getId(),
+                        again.get().getFolio(), again.get().pieces(), null);
+            }
+            return new CommitRowResult(grp.requestId(), grp.clientName(), "REJECTED", "No se pudo guardar la guía.", null, null, groupPieces, null);
+        }
+    }
+
+    /**
+     * Alta del cliente en el catálogo con la dirección del archivo; si ya existe exactamente, se usa el existente.
+     * Los duplicados se revisan ANTES de crear para no marcar la transacción del renglón como fallida.
+     */
+    private Long createOrMatchRecipient(Long senderId, CommitGroup grp) {
+        String name = Text.truncate(grp.clientName().trim(), 120);
+        AddressDto a = grp.address();
+        var check = recipientService.checkDuplicates(new mx.salter.api.recipient.RecipientDtos.DuplicateCheckRequest(senderId, name, null, null,
+                a == null ? null : a.street(), a == null ? null : a.zip(), null));
+        if (check.exactDuplicate()) {
+            for (var m : check.matches()) if (m.recipientId() != null) return m.recipientId();
+        }
+        return recipientService.create(new mx.salter.api.recipient.RecipientDtos.RecipientRequest(senderId, name, null, null, null, a, null, null,
+                Text.truncate(Text.trimToNull(grp.route()), 20), Text.truncate(Text.trimToNull(grp.subRoute()), 20), true, null,
+                null, null, null)).id();
     }
 
     private record Parsed(List<Block> blocks, String load, String route, Integer declared) {}

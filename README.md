@@ -36,7 +36,8 @@ src/main/java/mx/salter/api/
   recipient/   destinatarios, búsqueda sin acentos, duplicados, importación Excel/CSV
   catalog/     turnos, conceptos de mercancía, configuración, folios consecutivos
   guide/       guías, partidas, máquina de estados, historial, alcance, PDF
-  manifest/    manifiestos, cierre, reapertura, despacho (salida), PDF
+  manifest/    manifiestos por ruta, Viaja/No viaja, cierre, autorización, despacho (salida), PDF
+  route/       rutas de embarque (catálogo, panorama operativo)
   operation/   repartidores, asignaciones, recepción en destino, entrega final
   incident/    incidencias y notas
   attachment/  evidencias y archivos (validación por firma real)
@@ -44,7 +45,7 @@ src/main/java/mx/salter/api/
   tracking/    rastreo público (datos mínimos)
   audit/       bitácora de acciones sensibles
   common/      errores RFC 7807, paginación, texto, PDF, utilidades
-src/main/resources/db/migration/   migraciones Flyway (V1 esquema, V2 datos de referencia)
+src/main/resources/db/migration/   migraciones Flyway V1–V9 (V9: subruta, rutas de embarque, Viaja/No viaja, autorización, lotes/LPN, ubicación, roles OPERACIONES y ENCARGADO)
 ```
 
 ## Desarrollo local
@@ -91,6 +92,10 @@ de confirmar e importar), `repartidor@`, `recepcion@` y `remitente@salter.local`
 
 Levantan un PostgreSQL embebido real, aplican las migraciones y recorren los flujos críticos
 (ver `src/test/java`). No requieren Docker.
+
+Revisión manual de pantallas sin tocar tu base local: `./mvnw test -Dtest=ServidorLocalManual -Dsalter.manual=true`
+levanta la API en `:8080` con un PostgreSQL embebido temporal (admin `admin@local.test` / `AdminLocal2026`, acceso de pruebas
+activo). Se detiene al borrar `target/servidor-local.lock`.
 
 ## Conexión con el frontend
 
