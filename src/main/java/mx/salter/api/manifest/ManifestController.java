@@ -122,7 +122,7 @@ public class ManifestController {
         return service.dispatch(id, req);
     }
 
-    @GetMapping(value = "/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    @GetMapping("/{id}/pdf")
     @PreAuthorize("hasAnyAuthority('MANIFESTS_VIEW','MANIFESTS_MANAGE','DISPATCH_AUTHORIZE','DISPATCH_REGISTER')")
     public ResponseEntity<byte[]> pdf(@PathVariable Long id) {
         ManifestPdfService.Rendered r = pdf.render(id);

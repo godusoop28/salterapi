@@ -137,7 +137,8 @@ class FlujoOperativoTest extends IntegrationTestBase {
         assertThat(call(GET, "/api/guides/by-folio/" + folio + "|PBA|OAX|8", sup, null).status()).isEqualTo(200);
         // Documento PDF con el formato oficial
         var pdf = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                .get("/api/guides/" + g.body().get("id").asLong() + "/pdf").header("Authorization", "Bearer " + sup)).andReturn().getResponse();
+                .get("/api/guides/" + g.body().get("id").asLong() + "/pdf").header("Authorization", "Bearer " + sup)
+                .header("Accept", "application/json")).andReturn().getResponse();
         assertThat(pdf.getStatus()).isEqualTo(200);
         byte[] bytes = pdf.getContentAsByteArray();
         assertThat(new String(bytes, 0, 5, java.nio.charset.StandardCharsets.ISO_8859_1)).isEqualTo("%PDF-");

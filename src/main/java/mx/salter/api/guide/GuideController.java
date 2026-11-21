@@ -201,7 +201,7 @@ public class GuideController {
         return service.addNote(id, req.notes(), req.location());
     }
 
-    @GetMapping(value = "/{id}/pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    @GetMapping("/{id}/pdf")
     @Operation(summary = "Documento de guía (formato del cliente). variant=CLIENTE (sin datos de quien recibe, por defecto) o "
             + "INTERNA (personal operativo); size=LETTER o LABEL_4X6.")
     public ResponseEntity<byte[]> pdf(@PathVariable Long id,
