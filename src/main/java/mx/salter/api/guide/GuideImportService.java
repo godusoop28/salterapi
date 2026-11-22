@@ -88,7 +88,7 @@ public class GuideImportService {
                               int packages, List<TypeCount> types, List<String> lpns, String route, String notes,
                               String matchType, RecipientDto recipient, List<RecipientDto> suggestions,
                               Long existingGuideId, String existingFolio, List<String> duplicateOrders,
-                              List<PackageLine> packageLines) {}
+                              List<PackageLine> packageLines, String suggestedSubRoute) {}
 
     public record ImportPreview(String fileName, Long senderId, String senderName, String load, String route,
                                 Integer declaredPackages, int totalPackages, String defaultDestination, List<ImportGroup> groups,
@@ -214,9 +214,20 @@ public class GuideImportService {
                 match = words.get(wordsKey(first.name));
                 if (match != null) how = "WORDS";
             }
+            AddressDto parsedAddress = parseAddress(addressText);
+            if (match == null) {
+                // Mismo cliente con el nombre escrito distinto (ej. "JIMENEZ AMAYA MARGARITOREFACCIONARIA JIMENEZ"):
+                // comparte 2+ palabras del nombre Y el mismo C.P. con UN solo cliente del catálogo.
+                match = probable(first.name, parsedAddress.zip(), catalog);
+                if (match != null) how = "PROBABLE";
+            }
             List<RecipientDto> suggestions = match != null ? List.of() : suggest(first.name, catalog);
-            if (match != null) {
-                String dest = RecipientDtos.plazaOf(match.getSubRoute());
+            String route = first.route != null ? first.route : parsed.route;
+            // Cliente nuevo: subruta que tienen TODOS los clientes del catálogo del mismo municipio y ruta (ej. Jiutepec, 74 → CVA-04).
+            String suggestedSubRoute = match != null ? null : subRouteByCity(parsedAddress.city(), route, catalog);
+            String plazaSource = match != null ? match.getSubRoute() : suggestedSubRoute;
+            if (plazaSource != null) {
+                String dest = RecipientDtos.plazaOf(plazaSource);
                 if (dest != null) destinations.merge(dest, 1, Integer::sum);
             }
 
@@ -231,14 +242,14 @@ public class GuideImportService {
                     dupOrders = orders.stream().filter(o -> dups.stream().anyMatch(d -> GuideService.orderNumbers(d.getOrderReference()).contains(o))).toList();
                 }
             }
-            String route = first.route != null ? first.route : parsed.route;
             String notes = Text.truncate(Text.join(parsed.load != null ? "Carga " + parsed.load + "." : null,
                     lpns.isEmpty() ? null : "LPN: " + String.join(", ", lpns)), 1000);
 
-            groups.add(new ImportGroup(requestId.toString(), first.name, orders, addressText, parseAddress(addressText), count,
+            groups.add(new ImportGroup(requestId.toString(), first.name, orders, addressText, parsedAddress, count,
                     types.entrySet().stream().map(t -> new TypeCount(t.getKey(), t.getValue())).toList(), lpns, route, notes,
                     how, match == null ? null : RecipientDto.of(match), suggestions,
-                    existing.map(Guide::getId).orElse(null), existing.map(Guide::displayReference).orElse(null), dupOrders, lines));
+                    existing.map(Guide::getId).orElse(null), existing.map(Guide::displayReference).orElse(null), dupOrders, lines,
+                    suggestedSubRoute));
         }
         groups.sort(Comparator.comparing(ImportGroup::clientName, String.CASE_INSENSITIVE_ORDER));
         String defaultDestination = destinations.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(null);
@@ -499,6 +510,35 @@ public class GuideImportService {
 
     private static List<String> words(String name) {
         return Arrays.stream(Text.normalize(name).replace('.', ' ').replace('-', ' ').split(" ")).filter(w -> !w.isBlank()).toList();
+    }
+
+    private static long sharedWords(String name, Recipient r) {
+        List<String> mine = words(name).stream().filter(w -> w.length() > 2).toList();
+        return words(r.fullName()).stream().filter(mine::contains).distinct().count();
+    }
+
+    /** Un único cliente del catálogo con 2+ palabras del nombre en común y el mismo código postal. */
+    static Recipient probable(String name, String zip, List<Recipient> catalog) {
+        if (zip == null || zip.isBlank()) return null;
+        List<Recipient> hits = catalog.stream()
+                .filter(r -> r.getAddress() != null && zip.equals(r.getAddress().getZip()))
+                .filter(r -> sharedWords(name, r) >= 2)
+                .toList();
+        return hits.size() == 1 ? hits.get(0) : null;
+    }
+
+    /** Subruta común a todos los clientes del catálogo con el mismo municipio y ruta; null si no hay o hay varias. */
+    static String subRouteByCity(String city, String route, List<Recipient> catalog) {
+        if (city == null || city.isBlank()) return null;
+        String c = Text.normalize(city);
+        String rt = route == null ? null : route.trim();
+        java.util.Set<String> found = new TreeSet<>();
+        for (Recipient r : catalog) {
+            if (r.getSubRoute() == null || r.getAddress() == null || !c.equals(Text.normalize(r.getAddress().getCity()))) continue;
+            if (rt != null && r.getRoute() != null && !rt.equalsIgnoreCase(r.getRoute().trim())) continue;
+            found.add(r.getSubRoute());
+        }
+        return found.size() == 1 ? found.iterator().next() : null;
     }
 
     /** Sugerencias cuando no hay coincidencia: clientes del catálogo que comparten 2+ palabras del nombre. */

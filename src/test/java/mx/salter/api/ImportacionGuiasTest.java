@@ -32,6 +32,10 @@ class ImportacionGuiasTest extends IntegrationTestBase {
             {"CLIENTE NUEVO PRUEBA", "9004", "CALLE 5, 1, Norte, Temixco, , Mexico, Morelos, 62580", "LPN-6", "Caja", "CARGA-7", "74"},
             {" ", " ", "Total de bultos: 6", null, " ", " ", null},
         };
+        return excel(rows);
+    }
+
+    private static byte[] excel(String[][] rows) throws Exception {
         try (XSSFWorkbook wb = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             Sheet s = wb.createSheet("Hoja1");
             for (int i = 0; i < rows.length; i++) {
@@ -49,6 +53,42 @@ class ImportacionGuiasTest extends IntegrationTestBase {
                 .header("Authorization", "Bearer " + token).header("X-Requested-With", "test")).andReturn().getResponse();
         assertThat(res.getStatus()).as(res.getContentAsString()).isEqualTo(200);
         return json.readTree(res.getContentAsByteArray());
+    }
+
+    /** Archivos reales: nombre escrito distinto en el listado (mismo C.P.) y subruta de clientes nuevos por municipio. */
+    @Test
+    void relacionaPorCodigoPostalYSugiereSubrutaPorMunicipio() throws Exception {
+        String admin = admin();
+        long sender = createSender(admin, "Remitente municipios");
+        String remi = user(admin, "REMITENTE", sender, null);
+        Object[][] catalog = {
+            {"JIMENEZ AMAYA MARGARITOREFACCIONARIA JIMENEZ", "AV DOMINGO DIEZ 505", "Cuernavaca", "62250", "CVA-01"},
+            {"TAPIA SANCHEZ RAFAEL", "LAZARO CARDENAS 129", "Jiutepec", "62577", "CVA-04"},
+            {"SALGADO PASTRANA DAVID", "CARR FED CUAUTLA KM 16", "Jiutepec", "62575", "CVA-04"},
+            {"CONSTANTINO JUAREZ JACOBO", "AV DOMINGO DIEZ 509", "Cuernavaca", "62250", "CVA-02"},
+        };
+        for (Object[] c : catalog) {
+            assertThat(call(HttpMethod.POST, "/api/recipients", remi, Map.of("firstName", c[0], "route", "74", "subRoute", c[4],
+                    "address", Map.of("street", c[1], "city", c[2], "state", "Morelos", "zip", c[3]))).status()).isEqualTo(201);
+        }
+        String[][] rows = {
+            {"Nombre de cliente", "Pedido", "Dirección", "LPN", "Tipo LPN", "Carga", "Ruta"},
+            {"MARGARITO JIMENEZ AMAYA", "8833645", "AV DOMINGO DIEZ, 505, Del Empleado, Cuernavaca, Del Empleado, Cuernavaca, Mexico, Morelos, 62250", "L-1", "Caja", "CARGA-M", "74"},
+            {"ERICK EMANUEL BENITEZ ALANIS", "8833622", "EMILIANO ZAPATA, MZ 22, Morelos, Jiutepec, Morelos, Jiutepec, Mexico, Morelos, 62577", "L-2", "Caja", "CARGA-M", "74"},
+            {"CLIENTE CUERNAVACA NUEVO", "8833700", "CALLE 1, 2, Centro, Cuernavaca, , Mexico, Morelos, 62000", "L-3", "Caja", "CARGA-M", "74"},
+        };
+        JsonNode groups = preview(remi, excel(rows)).get("groups");
+
+        JsonNode margarito = find(groups, "MARGARITO JIMENEZ AMAYA");
+        assertThat(margarito.get("matchType").asText()).isEqualTo("PROBABLE");
+        assertThat(margarito.get("recipient").get("subRoute").asText()).isEqualTo("CVA-01");
+
+        JsonNode erick = find(groups, "ERICK EMANUEL BENITEZ ALANIS");
+        assertThat(erick.hasNonNull("recipient")).isFalse();
+        assertThat(erick.get("suggestedSubRoute").asText()).isEqualTo("CVA-04");     // todos los de Jiutepec, ruta 74
+
+        JsonNode cva = find(groups, "CLIENTE CUERNAVACA NUEVO");
+        assertThat(cva.hasNonNull("suggestedSubRoute")).isFalse();                  // Cuernavaca tiene CVA-01 y CVA-02: no se adivina
     }
 
     @Test

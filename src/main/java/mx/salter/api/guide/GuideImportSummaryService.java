@@ -47,10 +47,12 @@ public class GuideImportSummaryService {
     public record SummaryItem(@Size(max = 60) String type, @Min(0) @Max(9999) int quantity) {}
 
     public record SummaryRow(
+            @Size(max = 40) String clientCode,
             @Size(max = 120) String clientName,
             @Size(max = 200) String orders,
             @Size(max = 120) String city,
             @Size(max = 120) String state,
+            @Size(max = 20) String route,
             @Size(max = 5) String destinationCode,
             @Size(max = 20) String subRoute,
             boolean newClient,
@@ -67,7 +69,8 @@ public class GuideImportSummaryService {
 
     public record Rendered(String filename, byte[] bytes) {}
 
-    static final String[] HEADERS = {"#", "Cliente", "Pedido(s)", "Ciudad", "Estado", "Destino", "Subruta", "Bultos", "Piezas"};
+    /** Términos del listado de clientes y del reporte de carga del remitente (# CLIENTE, MUNICIPIO, RUTA, SUB RUTA). */
+    static final String[] HEADERS = {"#", "# Cliente", "Cliente", "Pedido(s)", "Municipio", "Estado", "Ruta", "Subruta", "Destino", "Bultos", "Piezas"};
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm", Locale.forLanguageTag("es-MX"));
     private static final DateTimeFormatter FILE = DateTimeFormatter.ofPattern("yyyyMMdd-HHmm");
 
@@ -120,9 +123,9 @@ public class GuideImportSummaryService {
     }
 
     private static String[] cells(int index, SummaryRow r) {
-        return new String[]{String.valueOf(index), nz(r.clientName()) + (r.newClient() ? " (nuevo)" : ""), nz(r.orders()), nz(r.city()),
-                nz(r.state()), nz(r.destinationCode()).toUpperCase(Locale.ROOT), nz(r.subRoute()).toUpperCase(Locale.ROOT), packages(r),
-                String.valueOf(pieces(r))};
+        return new String[]{String.valueOf(index), nz(r.clientCode()), nz(r.clientName()) + (r.newClient() ? " (nuevo)" : ""), nz(r.orders()),
+                nz(r.city()), nz(r.state()), nz(r.route()), nz(r.subRoute()).toUpperCase(Locale.ROOT),
+                nz(r.destinationCode()).toUpperCase(Locale.ROOT), packages(r), String.valueOf(pieces(r))};
     }
 
     private String declaredLine(SummaryRequest req, Totals t) {
@@ -159,7 +162,7 @@ public class GuideImportSummaryService {
         if (!declared.isEmpty()) doc.add(new Paragraph(declared, PdfSupport.SMALL));
 
         doc.add(PdfSupport.section("Detalle (" + t.guides() + " guías)"));
-        PdfPTable d = new PdfPTable(new float[]{0.35f, 2.6f, 1.3f, 1.3f, 1.1f, 0.7f, 0.8f, 2f, 0.6f});
+        PdfPTable d = new PdfPTable(new float[]{0.35f, 0.7f, 2.5f, 1.2f, 1.3f, 1f, 0.5f, 0.8f, 0.65f, 1.8f, 0.6f});
         d.setWidthPercentage(100);
         d.setHeaderRows(1);
         for (String h : HEADERS) d.addCell(th(h));

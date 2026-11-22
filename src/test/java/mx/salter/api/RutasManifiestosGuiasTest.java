@@ -82,8 +82,8 @@ class RutasManifiestosGuiasTest extends IntegrationTestBase {
         req.put("declaredPackages", 9);
         req.put("excludedPieces", 0);
         req.put("rows", List.of(
-                Map.of("clientName", "Refaccionaria Uno", "orders", "1001, 1002", "city", "Jojutla", "state", "Morelos",
-                        "destinationCode", "cva", "subRoute", "CVA-01", "newClient", false,
+                Map.of("clientCode", "5788", "clientName", "Refaccionaria Uno", "orders", "1001, 1002", "city", "Jojutla", "state", "Morelos",
+                        "route", "74", "destinationCode", "cva", "subRoute", "CVA-01", "newClient", false,
                         "items", List.of(Map.of("type", "Caja", "quantity", 4), Map.of("type", "Sobre", "quantity", 2))),
                 Map.of("clientName", "Taller Dos", "orders", "2001", "city", "Cuautla", "state", "Morelos",
                         "destinationCode", "CVA", "subRoute", "", "newClient", true,
@@ -97,7 +97,7 @@ class RutasManifiestosGuiasTest extends IntegrationTestBase {
         assertThat(pdf.getContentType()).isEqualTo("application/pdf");
         String t = text(pdf.getContentAsByteArray());
         assertThat(t).contains("Resumen de guías por confirmar", "Auto Todo Resumen", "CARGA-77",
-                "74 · MORELOS", "Refaccionaria Uno", "1001, 1002", "4 Caja, 2 Sobre", "Taller Dos (nuevo)", "CVA", "TOTAL", "8",
+                "74 · MORELOS", "Refaccionaria Uno", "1001, 1002", "4 Caja, 2 Sobre", "Taller Dos (nuevo)", "CVA", "TOTAL", "8", "# Cliente", "Municipio", "5788",
                 "diferencia 1", "ELABORÓ", "REVISÓ");
 
         MockHttpServletResponse x = mvc.perform(MockMvcRequestBuilders.post("/api/guides/import/summary?format=XLSX")
@@ -110,13 +110,15 @@ class RutasManifiestosGuiasTest extends IntegrationTestBase {
             List<String> clients = new ArrayList<>();
             double total = -1;
             for (Row r : sh) {
-                if (r.getCell(1) != null && r.getCell(0) != null && r.getCell(0).getCellType() == org.apache.poi.ss.usermodel.CellType.NUMERIC)
-                    clients.add(r.getCell(1).getStringCellValue());
-                if (r.getCell(7) != null && "TOTAL".equals(r.getCell(7).getStringCellValue())) total = r.getCell(8).getNumericCellValue();
+                if (r.getCell(2) != null && r.getCell(0) != null && r.getCell(0).getCellType() == org.apache.poi.ss.usermodel.CellType.NUMERIC)
+                    clients.add(r.getCell(2).getStringCellValue());
+                if (r.getCell(9) != null && "TOTAL".equals(r.getCell(9).getStringCellValue())) total = r.getCell(10).getNumericCellValue();
             }
             assertThat(clients).containsExactly("Refaccionaria Uno", "Taller Dos (nuevo)");
             assertThat(total).isEqualTo(8);
         }
+        java.nio.file.Files.write(java.nio.file.Path.of("target", "resumen-guias-ejemplo.pdf"), pdf.getContentAsByteArray());
+        java.nio.file.Files.write(java.nio.file.Path.of("target", "resumen-guias-ejemplo.xlsx"), x.getContentAsByteArray());
         // No guarda nada
         assertThat(call(GET, "/api/guides?size=1", admin, null).body().get("totalElements").asLong()).isEqualTo(before);
         // Un remitente no puede sacar el resumen a nombre de otro
