@@ -143,7 +143,8 @@ advertencias) y `notTravelledHistory`.
 - `POST /guides/import/commit`: genera las guías de la previsualización revisada. Una transacción por guía; resultado por
   renglón `CREATED | SKIPPED_EXISTING | SKIPPED_DUPLICATE | EXCLUDED | REJECTED`; reintentar con el mismo `fileKey` no duplica.
   Guarda el lote (`guide_import_batches`) y los LPN (`guide_packages`).
-- `GET /guides/{id}/pdf?variant=CLIENTE|INTERNA&size=LETTER|LABEL_4X6`. CLIENTE (por defecto) es el formato oficial con
+- `POST /guides/import/summary?format=PDF|XLSX` (GUIDES_CREATE): resumen de las guías ESTIMADAS de la importación revisada,
+  antes de confirmarlas (remitente, archivo, carga, ruta de embarque, totales y detalle por cliente). No guarda nada.- `GET /guides/{id}/pdf?variant=CLIENTE|INTERNA&size=LETTER|LABEL_4X6`. CLIENTE (por defecto) es el formato oficial con
   consignatario (nombre, domicilio, ciudad) y nombre/firma; no incluye el teléfono de quien recibe. INTERNA agrega el teléfono.
   Los datos personales no van en el nombre de archivo, metadatos ni código.
 - `GET /guides/barcode?code=…`: interpreta el PDF417 (`FOLIO|V2|ORIGEN|DESTINO|PIEZAS|PESO|FECHA|SUBRUTA|SERVICIO|COMPROMISO`,

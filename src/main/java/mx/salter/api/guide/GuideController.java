@@ -43,11 +43,13 @@ public class GuideController {
     private final GuideService service;
     private final GuidePdfService pdf;
     private final GuideImportService importer;
+    private final GuideImportSummaryService importSummary;
 
-    public GuideController(GuideService service, GuidePdfService pdf, GuideImportService importer) {
+    public GuideController(GuideService service, GuidePdfService pdf, GuideImportService importer, GuideImportSummaryService importSummary) {
         this.service = service;
         this.pdf = pdf;
         this.importer = importer;
+        this.importSummary = importSummary;
     }
 
     @GetMapping
@@ -157,6 +159,21 @@ public class GuideController {
         return importer.commit(req);
     }
 
+    @PostMapping("/import/summary")
+    @PreAuthorize("hasAuthority('GUIDES_CREATE')")
+    @Operation(summary = "Resumen (PDF o Excel) de las guías estimadas de la importación revisada, ANTES de confirmarlas. No guarda nada.")
+    public ResponseEntity<byte[]> importSummary(@Valid @RequestBody GuideImportSummaryService.SummaryRequest req,
+                                                @RequestParam(required = false, defaultValue = "PDF") GuideImportSummaryService.Format format) {
+        GuideImportSummaryService.Rendered r = importSummary.render(req, format);
+        MediaType type = format == GuideImportSummaryService.Format.XLSX
+                ? MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                : MediaType.APPLICATION_PDF;
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(r.filename()).build().toString())
+                .contentType(type)
+                .body(r.bytes());
+    }
+
     @PostMapping("/{id}/route")
     @PreAuthorize("hasAuthority('ROUTES_REASSIGN')")
     @Operation(summary = "Cambia la ruta de embarque de la guía (motivo obligatorio; queda en el historial y en el manifiesto).")
@@ -202,8 +219,8 @@ public class GuideController {
     }
 
     @GetMapping("/{id}/pdf")
-    @Operation(summary = "Documento de guía (formato del cliente). variant=CLIENTE (sin datos de quien recibe, por defecto) o "
-            + "INTERNA (personal operativo); size=LETTER o LABEL_4X6.")
+    @Operation(summary = "Documento de guía (formato del cliente). variant=CLIENTE (formato oficial con consignatario, por defecto) o "
+            + "INTERNA (agrega el teléfono; personal operativo); size=LETTER o LABEL_4X6.")
     public ResponseEntity<byte[]> pdf(@PathVariable Long id,
                                       @RequestParam(required = false, defaultValue = "CLIENTE") GuidePdfService.Variant variant,
                                       @RequestParam(required = false) String size) {
