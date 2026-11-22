@@ -57,9 +57,9 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>Dos presentaciones con la MISMA lógica de generación:
  * <ul>
- *   <li>{@link Variant#CLIENTE}: para el cliente. NO incluye nombre, domicilio ni teléfono de quien recibe, ni los campos
- *       de nombre y firma de recepción. Tampoco en metadatos, nombre de archivo ni código de barras.</li>
- *   <li>{@link Variant#INTERNA}: documento operativo completo (consignatario y firmas) para personal autorizado.</li>
+ *   <li>{@link Variant#CLIENTE}: el formato oficial (consignatario, nombre y firma), que es lo que se pega en el bulto.
+ *       NO incluye el teléfono de quien recibe. Los datos personales no van en metadatos, nombre de archivo ni código.</li>
+ *   <li>{@link Variant#INTERNA}: igual, más el teléfono de quien recibe, sólo para personal autorizado.</li>
  * </ul>
  */
 @Service
@@ -169,7 +169,7 @@ public class GuidePdfService {
         t.addCell(plain(pieces(g, l)));
         t.addCell(plain(barcode(g, l, width)));
         t.addCell(plain(folioBox(g, l)));
-        if (v == Variant.INTERNA) t.addCell(plain(signatures(l)));
+        t.addCell(plain(signatures(l)));
         return t;
     }
 
@@ -250,29 +250,22 @@ public class GuidePdfService {
         }
     }
 
-    // ── 2. Consignatario (sólo versión interna) + fecha, peso, dimensiones ──
+    // ── 2. Consignatario (teléfono sólo en la versión interna) + fecha, peso, dimensiones ──
     private PdfPTable consignee(Guide g, Layout l, Variant v) {
         PdfPTable t = new PdfPTable(new float[]{1.25f, 0.6f, 0.55f});
         t.setWidthPercentage(100);
         boolean internal = v == Variant.INTERNA;
-        PdfPCell title = text(spaced(internal ? "CONSIGNATARIO." : "DATOS DEL ENVÍO."), l.caps, Element.ALIGN_LEFT, Rectangle.NO_BORDER);
+        PdfPCell title = text(spaced("CONSIGNATARIO."), l.caps, Element.ALIGN_LEFT, Rectangle.NO_BORDER);
         title.setColspan(3);
         title.setPaddingLeft(28 * l.k);
         title.setPaddingTop(8 * l.k);
         title.setPaddingBottom(8 * l.k);
         t.addCell(title);
 
-        String line1, line2, line3;
-        if (internal) {
-            line1 = up(g.getRcptClientCode() == null ? g.getRcptName() : "#" + g.getRcptClientCode() + "  " + g.getRcptName());
-            line2 = up(Text.join(g.getRcptStreet(), g.getRcptNeighborhood() == null ? null : "COL. " + g.getRcptNeighborhood()));
-            line3 = up(Text.join(g.getRcptCity(), g.getRcptState(), g.getRcptZip() == null ? null : "C.P. " + g.getRcptZip()));
-        } else {
-            // Versión cliente: sólo datos operativos, sin nombre, domicilio ni contacto de quien recibe.
-            line1 = "DESTINO " + code(g.getDestinationCode());
-            line2 = g.getOrderReference() == null ? "" : "PEDIDO " + up(g.getOrderReference());
-            line3 = g.getShippingRoute() == null ? "" : "RUTA DE EMBARQUE " + up(g.getShippingRoute().getCode());
-        }
+        // El consignatario va en AMBAS versiones: es la etiqueta que se pega en el bulto (confirmado por el cliente).
+        String line1 = up(g.getRcptClientCode() == null ? g.getRcptName() : "#" + g.getRcptClientCode() + "  " + g.getRcptName());
+        String line2 = up(Text.join(g.getRcptStreet(), g.getRcptNeighborhood() == null ? null : "COL. " + g.getRcptNeighborhood()));
+        String line3 = up(Text.join(g.getRcptCity(), g.getRcptState(), g.getRcptZip() == null ? null : "C.P. " + g.getRcptZip()));
         LocalDate date = g.getConfirmedAt() == null ? null : g.getConfirmedAt().atZone(zone).toLocalDate();
         String[][] rows = {
                 {line1, "FECHA", date == null ? "" : SHORT.format(date)},

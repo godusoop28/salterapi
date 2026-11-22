@@ -54,7 +54,7 @@ claramente señalados; ninguno debe considerarse acuerdo definitivo hasta valida
 | 23 | Manifiesto en preparación por ruta | Uno por ruta de embarque; incluye guías de cualquier fecha mientras esté abierto | Índice `ux_manifests_open_route` | Si debe partirse por fecha o turno |
 | 24 | Guías «No viaja» | No se despachan; al registrar la salida quedan en el historial del manifiesto y pasan al siguiente en preparación de su ruta | `ManifestService.dispatch` | — |
 | 25 | Gráfica del día del cliente | Guías **confirmadas hoy** (hora de México), sin canceladas | `ReportService.today` | Si debe ser «guías con movimiento hoy» |
-| 26 | Versión de la guía para cliente | Por defecto en todas las descargas; la interna sólo para personal operativo | `GuidePdfService.Variant` | Qué copia se pega en el bulto |
+| 26 | Versión de la guía para cliente | ✅ **Lleva el consignatario y nombre/firma** (confirmado: es la que se pega en el bulto). La interna sólo agrega el teléfono, para personal operativo | `GuidePdfService.Variant` | — |
 | 27 | Formato del manifiesto | Plantilla PROVISIONAL mejorada (ruta, totales, viaja/no viaja, cambios de ruta, firmas) | `ManifestPdfService` | Ejemplo oficial del cliente |
 | 28 | DPN | No existe en el código ni en el importador; el reporte de guías no exporta identificadores de bulto (LPN/DPN) | `ReportExporter` | Confirmar en qué documento aparece el DPN |
 | 29 | Traslado entre locales / centros de reparto | NO implementado: no hay catálogo de centros. Hoy se cubre con cambio de ruta + asignación de operador | — | Definir centros y reglas |

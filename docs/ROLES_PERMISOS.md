@@ -47,7 +47,7 @@ existentes. Los permisos siguen siendo configurables por rol y por usuario (conc
   Reabrir un manifiesto anula su autorización.
 - **Cambio de ruta de embarque:** requiere `ROUTES_REASSIGN` y motivo; al capturar, elegir una ruta distinta de la predeterminada
   del remitente cuenta como cambio. No se permite si el manifiesto de la guía ya está cerrado o despachado.
-- **Versión interna del PDF** (con datos de quien recibe): sólo `GUIDES_VIEW_ALL`, `DELIVERIES_ANY`, `RECEPTION_CONFIRM` o el
+- **Versión interna del PDF** (agrega el teléfono de quien recibe): sólo `GUIDES_VIEW_ALL`, `DELIVERIES_ANY`, `RECEPTION_CONFIRM` o el
   repartidor asignado. El resto obtiene la versión para cliente.
 
 "Recepción" es un conjunto de permisos: puede asignarse `RECEPTION_CONFIRM` a cualquier usuario sin crear uno exclusivo.

@@ -162,14 +162,16 @@ class RutasManifiestosGuiasTest extends IntegrationTestBase {
         String t = text(cli.getContentAsByteArray());
         assertThat(t).contains("AUTO TODO MEXICANA", "CVA-01", "NO APLICA", "PIEZAS", "8");
         assertThat(t.toUpperCase()).doesNotContain("PUEBLA");
-        assertThat(t.toUpperCase()).doesNotContain("JAIME", "AVELAR", "NICOLAS BRAVO", "7775550000", "FIRMA", "CONSIGNATARIO");
+        // La etiqueta del cliente lleva el consignatario y la firma (formato oficial); sólo el teléfono queda fuera
+        assertThat(t.toUpperCase()).contains("C O N S I G N A T A R I O", "AVELAR MORALES", "NICOLAS BRAVO 204", "JOJUTLA", "MORELOS", "FIRMA");
+        assertThat(t).doesNotContain("7775550000");
 
-        // La versión interna es sólo para personal operativo
+        // La versión interna (con teléfono) es sólo para personal operativo
         assertThat(pdf(remi, "/api/guides/" + id + "/pdf?variant=INTERNA").getStatus()).isEqualTo(403);
         MockHttpServletResponse internal = pdf(admin, "/api/guides/" + id + "/pdf?variant=INTERNA&size=LABEL_4X6");
         assertThat(internal.getStatus()).isEqualTo(200);
         String ti = text(internal.getContentAsByteArray()).toUpperCase();
-        assertThat(ti).contains("AUTO TODO MEXICANA", "JAIME ARTURO", "CVA-01", "NO APLICA");
+        assertThat(ti).contains("AUTO TODO MEXICANA", "JAIME ARTURO", "CVA-01", "NO APLICA", "7775550000");
         assertThat(ti).doesNotContain("PUEBLA");
         java.nio.file.Files.write(java.nio.file.Path.of("target", "guia-cliente-ejemplo.pdf"), cli.getContentAsByteArray());
         java.nio.file.Files.write(java.nio.file.Path.of("target", "guia-interna-4x6-ejemplo.pdf"), internal.getContentAsByteArray());
