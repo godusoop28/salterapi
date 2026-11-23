@@ -1,24 +1,17 @@
 package mx.salter.api.guide;
 
-import com.lowagie.text.Chunk;
 import com.lowagie.text.Document;
 import com.lowagie.text.Element;
-import com.lowagie.text.Font;
 import com.lowagie.text.Image;
-import com.lowagie.text.Paragraph;
-import com.lowagie.text.Phrase;
 import com.lowagie.text.Rectangle;
 import com.lowagie.text.pdf.BarcodePDF417;
+import com.lowagie.text.pdf.BaseFont;
 import com.lowagie.text.pdf.PdfContentByte;
-import com.lowagie.text.pdf.PdfPCell;
-import com.lowagie.text.pdf.PdfPTable;
-import com.lowagie.text.pdf.PdfTemplate;
 import com.lowagie.text.pdf.PdfWriter;
 import java.awt.Color;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
-import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -35,25 +28,28 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Guía con el FORMATO OFICIAL del cliente (boceto "GUIA SALTER.xls"):
+ * Guía con el FORMATO OFICIAL del cliente. Se dibuja en posiciones absolutas tomadas de la muestra aprobada
+ * (imagen de 1536×1024 px, proporción 3:2), con Montserrat incrustada, para que tamaños y distribución sean idénticos:
  * <pre>
- *  PBA ⇒ OAX                      [logo]
- *  AUTO TODO MEXICANA          (sólo el nombre del remitente)
- *  ───────────────────────────────────────
- *  C O N S I G N A T A R I O
- *  NOMBRE                 FECHA        10/11/26
- *  CALLE                  PESO            10 KG
- *  CIUDAD ESTADO          DIMENSIONES  30X20X15
- *  8 P I E Z A S                   C V A - 0 1   (subruta)
- *  ───────────────────────────────────────
- *  [ código PDF417 ]
- *  ┌ A T M   0 0 0 0 0 0 0 0 1 ───────────┐
- *  │ SERVICIO ORDINARIO   FECHA COMPROMISO │
- *  └─────────────────────────── 11/11/26 ──┘
- *  ─────────────          ─────────────
- *   N O M B R E               F I R M A
+ *  PBA → OAX                    │        [logo]
+ *  AUTO TODO MEXICANA           │
+ *  ─────────────────────────────────────────────
+ *  C O N S I G N A T A R I O .
+ *  NOMBRE                       │  FECHA         22/11/26
+ *  CALLE                        │  PESO          NO APLICA
+ *  CIUDAD ESTADO                │  DIMENSIONES   NO APLICA
+ *        8 PIEZAS          │        CVA-01
+ *  ─────────────────────────────────────────────
+ *            [ código PDF417 ]
+ *  ┌──────────── A T M   0 0 0 0 0 0 0 0 1 ────────┐
+ *  │ SERVICIO ORDINARIO   │   FECHA COMPROMISO       │
+ *  │                      │       23/11/26           │
+ *  └───────────────────────────────────────────────┘
+ *  ─────────────────────────────────────────────
+ *       N O M B R E                    F I R M A
  * </pre>
  * Tamaño (pdf.guide.pageSize: LETTER o LABEL_4X6, o el parámetro size) y copias (pdf.guide.copies) configurables.
+ * En carta caben dos guías por hoja; la etiqueta 4×6 va en horizontal, una guía por etiqueta.
  *
  * <p>Dos presentaciones con la MISMA lógica de generación:
  * <ul>
@@ -69,10 +65,12 @@ public class GuidePdfService {
     public enum Variant { CLIENTE, INTERNA }
 
     private static final DateTimeFormatter SHORT = DateTimeFormatter.ofPattern("dd/MM/yy", Locale.forLanguageTag("es-MX"));
-    private static final Color ARROW_FILL = new Color(0xDC, 0xEB, 0xF7);
-    private static final Color ARROW_LINE = new Color(0x7A, 0x9C, 0xC6);
-    /** Ancho del formato en puntos sobre hoja carta (el boceto mide ~ 11.7 cm). */
-    private static final float LETTER_WIDTH = 400f;
+    /** Ancho del formato en puntos sobre hoja carta (19 cm; caben 2 guías por hoja). */
+    private static final float LETTER_WIDTH = 540f;
+    /** Medidas de la muestra: todas las coordenadas del dibujo están en px de ella (origen arriba a la izquierda). */
+    static final float W = 1536f, H = 1024f;
+    private static final Color ARROW = new Color(0x86, 0xBF, 0xF2);
+    private static final float LINE = 3.5f;
 
     private final GuideRepository guides;
     private final GuideAccess access;
@@ -116,222 +114,268 @@ public class GuidePdfService {
             throw ApiException.badRequest("INVALID_SIZE", "Tamaño no válido. Usa LETTER (carta) o LABEL_4X6 (etiqueta 4×6).");
         }
         boolean label = "LABEL_4X6".equalsIgnoreCase(size);
-        Rectangle page = label ? new Rectangle(288, 432) : PdfSupport.pageSize(size);
-        float side = label ? 10 : Math.max(20, (page.getWidth() - LETTER_WIDTH) / 2);
-        float top = label ? 10 : 36;
+        Rectangle page = label ? new Rectangle(432, 288) : PdfSupport.pageSize(size);
+        float margin = label ? 8 : 30;
+        float gap = 12;
+        float s = label ? Math.min((page.getWidth() - 2 * margin) / W, (page.getHeight() - 2 * margin) / H)
+                : Math.min(LETTER_WIDTH, page.getWidth() - 2 * margin) / W;
+        float boxW = W * s, boxH = H * s;
+        float x0 = (page.getWidth() - boxW) / 2;
+        float firstTop = label ? (page.getHeight() + boxH) / 2 : page.getHeight() - margin;
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        Document doc = new Document(page, side, side, top, top);
+        Document doc = new Document(page, margin, margin, margin, margin);
         PdfWriter writer = PdfWriter.getInstance(doc, out);
         doc.addTitle("Guía " + printedFolio(g.getFolio()));
         doc.addCreator("SALTER");
         doc.open();
-        float width = page.getWidth() - 2 * side;
-        Layout l = new Layout(width / LETTER_WIDTH);
+        Fonts f = Fonts.load();
+        float top = firstTop;
         for (int c = 0; c < copies; c++) {
-            if (c > 0 && label) doc.newPage();
-            PdfPTable sheet = sheet(writer, g, l, width, v);
-            sheet.setKeepTogether(true);
-            if (c > 0) sheet.setSpacingBefore(28 * l.k);
-            doc.add(sheet);
+            if (c > 0) {
+                top -= boxH + gap;
+                if (label || top - boxH < margin) {
+                    doc.newPage();
+                    top = firstTop;
+                }
+            }
+            // Algo de contenido de flujo para que la página exista aunque todo se dibuje en absoluto.
+            writer.setPageEmpty(false);
+            new Sheet(writer.getDirectContent(), f, x0, top, s).draw(g, v, zone);
         }
         doc.close();
         audit.record("GUIDE_PDF", "GUIDE", g.getId(), Map.of("folio", g.getFolio(), "variant", v.name(), "size", size.toUpperCase()));
         return new Rendered("guia-" + g.getFolio() + (v == Variant.CLIENTE ? "-cliente" : "-interna") + ".pdf", out.toByteArray());
     }
 
-    /** Fuentes escaladas al ancho disponible (carta = 1.0). */
-    private static final class Layout {
-        final float k;
-        final Font route, sender, caps, body, pieceNum, pieceTxt, cd, folio, service, sign;
+    /** Montserrat incrustada (como en la muestra); si no se puede cargar, Helvetica. */
+    private record Fonts(BaseFont medium, BaseFont semi, BaseFont bold) {
+        private static volatile Fonts cached;
 
-        Layout(float k) {
-            this.k = k;
-            route = new Font(Font.HELVETICA, 26 * k, Font.NORMAL, Color.BLACK);
-            sender = new Font(Font.HELVETICA, 9 * k, Font.NORMAL, Color.BLACK);
-            caps = new Font(Font.HELVETICA, 7.5f * k, Font.NORMAL, Color.BLACK);
-            body = new Font(Font.HELVETICA, 9.5f * k, Font.NORMAL, Color.BLACK);
-            pieceNum = new Font(Font.HELVETICA, 36 * k, Font.NORMAL, Color.BLACK);
-            pieceTxt = new Font(Font.HELVETICA, 17 * k, Font.NORMAL, Color.BLACK);
-            cd = new Font(Font.HELVETICA, 14 * k, Font.NORMAL, Color.BLACK);
-            folio = new Font(Font.HELVETICA, 18 * k, Font.NORMAL, Color.BLACK);
-            service = new Font(Font.HELVETICA, 9.5f * k, Font.NORMAL, Color.BLACK);
-            sign = new Font(Font.HELVETICA, 8 * k, Font.NORMAL, Color.BLACK);
+        static Fonts load() {
+            Fonts f = cached;
+            if (f == null) {
+                f = new Fonts(font("Montserrat-Medium", BaseFont.HELVETICA), font("Montserrat-SemiBold", BaseFont.HELVETICA_BOLD),
+                        font("Montserrat-Bold", BaseFont.HELVETICA_BOLD));
+                cached = f;
+            }
+            return f;
+        }
+
+        private static BaseFont font(String name, String fallback) {
+            try (var in = GuidePdfService.class.getResourceAsStream("/fonts/" + name + ".ttf")) {
+                if (in != null) {
+                    return BaseFont.createFont(name + ".ttf", BaseFont.IDENTITY_H, BaseFont.EMBEDDED, true, in.readAllBytes(), null);
+                }
+            } catch (Exception ignored) {
+                // se usa la fuente de respaldo
+            }
+            try {
+                return BaseFont.createFont(fallback, BaseFont.WINANSI, BaseFont.NOT_EMBEDDED);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
         }
     }
 
-    private PdfPTable sheet(PdfWriter writer, Guide g, Layout l, float width, Variant v) {
-        PdfPTable t = new PdfPTable(1);
-        t.setTotalWidth(width);
-        t.setLockedWidth(true);
-        t.addCell(plain(header(writer, g, l)));
-        t.addCell(plain(consignee(g, l, v)));
-        t.addCell(plain(pieces(g, l)));
-        t.addCell(plain(barcode(g, l, width)));
-        t.addCell(plain(folioBox(g, l)));
-        t.addCell(plain(signatures(l)));
-        return t;
-    }
+    /** Dibuja una guía en posiciones absolutas, escalada por {@code s} (pt por px de la muestra). */
+    private static final class Sheet {
+        final PdfContentByte cb;
+        final Fonts f;
+        final float x0, top, s;
 
-    // ── 1. Ruta, remitente y logo ──
-    private PdfPTable header(PdfWriter writer, Guide g, Layout l) {
-        PdfPTable t = new PdfPTable(new float[]{1.3f, 1f});
-        t.setWidthPercentage(100);
-
-        PdfPCell left = new PdfPCell();
-        left.setBorder(Rectangle.RIGHT | Rectangle.BOTTOM);
-        left.setPadding(2);
-        left.setPaddingBottom(5 * l.k);
-        PdfPTable route = new PdfPTable(new float[]{1f, 0.9f, 1f});
-        route.setWidthPercentage(100);
-        route.addCell(text(code(g.getOriginCode()), l.route, Element.ALIGN_RIGHT, Rectangle.NO_BORDER));
-        PdfPCell arrow = new PdfPCell(arrow(writer, l), false);
-        arrow.setBorder(Rectangle.NO_BORDER);
-        arrow.setHorizontalAlignment(Element.ALIGN_CENTER);
-        arrow.setVerticalAlignment(Element.ALIGN_MIDDLE);
-        arrow.setPaddingTop(5 * l.k);
-        route.addCell(arrow);
-        route.addCell(text(code(g.getDestinationCode()), l.route, Element.ALIGN_LEFT, Rectangle.NO_BORDER));
-        left.addElement(route);
-        // Sólo el nombre del remitente (ej. AUTO TODO MEXICANA). La ciudad/estado del remitente se conserva en la base,
-        // pero no se imprime: duplicaba "PUEBLA PUEBLA" junto a la plaza de origen.
-        Paragraph sender = new Paragraph(up(g.getSenderName()), l.sender);
-        sender.setLeading(10.5f * l.k);
-        left.addElement(sender);
-        t.addCell(left);
-
-        PdfPCell right = new PdfPCell();
-        right.setBorder(Rectangle.BOTTOM);
-        right.setHorizontalAlignment(Element.ALIGN_CENTER);
-        right.setVerticalAlignment(Element.ALIGN_MIDDLE);
-        right.setPadding(4 * l.k);
-        Image logo = logo(l);
-        if (logo != null) {
-            right.setImage(logo);
-            right.setFixedHeight(68 * l.k);
-        } else {
-            right.setPhrase(new Phrase("SALTER", l.route));
+        Sheet(PdfContentByte cb, Fonts f, float x0, float top, float s) {
+            this.cb = cb;
+            this.f = f;
+            this.x0 = x0;
+            this.top = top;
+            this.s = s;
         }
-        t.addCell(right);
-        return t;
-    }
 
-    private static Image arrow(PdfWriter writer, Layout l) {
-        float w = 46 * l.k, h = 16 * l.k;
-        PdfContentByte cb = writer.getDirectContent();
-        PdfTemplate tpl = cb.createTemplate(w, h);
-        float shaft = h * 0.32f, head = w * 0.3f;
-        tpl.setColorFill(ARROW_FILL);
-        tpl.setColorStroke(ARROW_LINE);
-        tpl.setLineWidth(0.7f);
-        tpl.moveTo(0.5f, h / 2 - shaft / 2);
-        tpl.lineTo(w - head, h / 2 - shaft / 2);
-        tpl.lineTo(w - head, 0.5f);
-        tpl.lineTo(w - 0.5f, h / 2);
-        tpl.lineTo(w - head, h - 0.5f);
-        tpl.lineTo(w - head, h / 2 + shaft / 2);
-        tpl.lineTo(0.5f, h / 2 + shaft / 2);
-        tpl.closePathFillStroke();
-        try {
-            return Image.getInstance(tpl);
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
+        float X(float px) {
+            return x0 + px * s;
+        }
+
+        float Y(float py) {
+            return top - py * s;
+        }
+
+        void draw(Guide g, Variant v, ZoneId zone) {
+            // ── 1. Ruta, remitente y logo ──
+            String o = code(g.getOriginCode()), d = code(g.getDestinationCode());
+            float routeSize = 78, arrowW = 86, arrowGap = 40;
+            float groupW = width(f.bold, routeSize, 0, o) + 2 * arrowGap + arrowW + width(f.bold, routeSize, 0, d);
+            float k = Math.min(1f, (830 - 105) / groupW);
+            float rs = routeSize * k;
+            float x = 105;
+            text(f.bold, rs, 0, o, x, 85, Element.ALIGN_LEFT, 0);
+            x += width(f.bold, rs, 0, o) + arrowGap * k;
+            arrow(x, 55, arrowW * k, k);
+            x += (arrowW + arrowGap) * k;
+            text(f.bold, rs, 0, d, x, 85, Element.ALIGN_LEFT, 0);
+            // Sólo el nombre del remitente (ej. AUTO TODO MEXICANA).
+            text(f.medium, 30.5f, 0, up(g.getSenderName()), 105, 130, Element.ALIGN_LEFT, 830 - 105);
+            vline(852, 12, 165);
+            logo(1040, 6, 1300, 160);
+            hline(171, 92, 1442);
+
+            // ── 2. Consignatario (teléfono sólo en la versión interna) + fecha, peso, dimensiones ──
+            spread(f.semi, 31, "CONSIGNATARIO.", 100, 217, 383);
+            String line1 = up(g.getRcptClientCode() == null ? g.getRcptName() : "#" + g.getRcptClientCode() + "  " + g.getRcptName());
+            String line2 = up(Text.join(g.getRcptStreet(), g.getRcptNeighborhood() == null ? null : "COL. " + g.getRcptNeighborhood()));
+            String line3 = up(Text.join(g.getRcptCity(), g.getRcptState(), g.getRcptZip() == null ? null : "C.P. " + g.getRcptZip()));
+            boolean phone = v == Variant.INTERNA && g.getRcptPhone() != null;
+            String[] lines = phone ? new String[]{line1, line2, line3, "TEL. " + g.getRcptPhone()} : new String[]{line1, line2, line3};
+            float[] base = phone ? new float[]{262, 295, 328, 361} : new float[]{273, 316, 358};
+            float bodySize = phone ? 31 : 35.5f;
+            for (int i = 0; i < lines.length; i++) text(f.semi, bodySize, 0, lines[i], 103, base[i], Element.ALIGN_LEFT, 840 - 103);
+            vline(858, 228, 352);
+            LocalDate date = g.getConfirmedAt() == null ? null : g.getConfirmedAt().atZone(zone).toLocalDate();
+            String[][] rows = {
+                    {"FECHA", date == null ? "" : SHORT.format(date)},
+                    {"PESO", g.isWeightNotApplicable() ? NOT_APPLICABLE : weight(g.getTotalWeightKg())},
+                    {"DIMENSIONES", g.isDimensionsNotApplicable() ? NOT_APPLICABLE : up(g.getDimensions())},
+            };
+            float[] rowBase = {242, 291, 340};
+            for (int i = 0; i < rows.length; i++) {
+                text(f.semi, 34, 0, rows[i][0], 1040, rowBase[i], Element.ALIGN_CENTER, 300);
+                text(f.semi, 34, 0, rows[i][1], 1320, rowBase[i], Element.ALIGN_CENTER, 1440 - 1200);
+            }
+
+            // ── 3. Piezas y SUBRUTA (CVA-01) ──
+            String n = String.valueOf(g.pieces()), word = piecesWord(g.pieces());
+            float numSize = 100, wordSize = 69, wordSp = 4, between = 40;
+            float pw = width(f.bold, numSize, 0, n) + between + width(f.bold, wordSize, wordSp, word);
+            float pk = Math.min(1f, 660 / pw);
+            float px = 421 - pw * pk / 2;
+            text(f.bold, numSize * pk, 0, n, px, 458, Element.ALIGN_LEFT, 0);
+            px += width(f.bold, numSize * pk, 0, n) + between * pk;
+            text(f.bold, wordSize * pk, wordSp * pk, word, px, 456, Element.ALIGN_LEFT, 0);
+            vline(781, 395, 462);
+            text(f.bold, 92, 3, up(g.getSubRoute()), 1106, 456, Element.ALIGN_CENTER, 1430 - 800);
+            hline(481, 92, 1444);
+
+            // ── 4. Código PDF417 ──
+            barcode(g, zone, 195, 507, 1325, 693);
+
+            // ── 5. Folio, servicio y fecha compromiso ──
+            cb.setLineWidth(LINE * s);
+            cb.rectangle(X(95), Y(908), (1440 - 95) * s, (908 - 714) * s);
+            cb.stroke();
+            hline(796, 95, 1440);
+            text(f.bold, 63, 10, printedFolio(g.getFolio()), 767, 773, Element.ALIGN_CENTER, 1300);
+            text(f.semi, 40, 0, "SERVICIO " + up(g.getServiceType()), 147, 862, Element.ALIGN_LEFT, 750 - 147);
+            vline(768, 810, 892);
+            text(f.semi, 33, 0, "FECHA COMPROMISO", 1108, 833, Element.ALIGN_CENTER, 640);
+            text(f.bold, 58, 0, g.getCommitmentDate() == null ? "" : SHORT.format(g.getCommitmentDate()), 1117, 885,
+                    Element.ALIGN_CENTER, 640);
+
+            // ── 6. Nombre y firma de quien recibe ──
+            hline(952, 92, 1444);
+            spread(f.semi, 28, "NOMBRE", 247, 987, 196);
+            spread(f.semi, 28, "FIRMA", 1087, 987, 151);
+        }
+
+        float width(BaseFont bf, float sizePx, float spacingPx, String t) {
+            if (t == null || t.isEmpty()) return 0;
+            return bf.getWidthPoint(t, sizePx) + spacingPx * (t.length() - 1);
+        }
+
+        /** Texto en px de la muestra; si excede {@code maxPx} (&gt; 0) se reduce el tamaño hasta caber. */
+        void text(BaseFont bf, float sizePx, float spacingPx, String t, float xPx, float basePx, int align, float maxPx) {
+            if (t == null || t.isEmpty()) return;
+            float w = width(bf, sizePx, spacingPx, t);
+            if (maxPx > 0 && w > maxPx) {
+                float r = maxPx / w;
+                sizePx *= r;
+                spacingPx *= r;
+                w = maxPx;
+            }
+            float left = align == Element.ALIGN_CENTER ? xPx - w / 2 : align == Element.ALIGN_RIGHT ? xPx - w : xPx;
+            cb.beginText();
+            cb.setFontAndSize(bf, sizePx * s);
+            cb.setCharacterSpacing(spacingPx * s);
+            cb.setTextMatrix(X(left), Y(basePx));
+            cb.showText(t);
+            cb.setCharacterSpacing(0);
+            cb.endText();
+        }
+
+        /** Texto con el espaciado entre letras necesario para ocupar {@code widthPx} (C O N S I G N A T A R I O). */
+        void spread(BaseFont bf, float sizePx, String t, float xPx, float basePx, float widthPx) {
+            float sp = Math.max(0, (widthPx - width(bf, sizePx, 0, t)) / (t.length() - 1));
+            text(bf, sizePx, sp, t, xPx, basePx, Element.ALIGN_LEFT, 0);
+        }
+
+        void hline(float y, float x1, float x2) {
+            cb.setLineWidth(LINE * s);
+            cb.moveTo(X(x1), Y(y));
+            cb.lineTo(X(x2), Y(y));
+            cb.stroke();
+        }
+
+        void vline(float x, float y1, float y2) {
+            cb.setLineWidth(LINE * s);
+            cb.moveTo(X(x), Y(y1));
+            cb.lineTo(X(x), Y(y2));
+            cb.stroke();
+        }
+
+        /** Flecha azul claro de trazo redondeado entre origen y destino. */
+        void arrow(float xPx, float yPx, float wPx, float k) {
+            float head = 21 * k;
+            cb.saveState();
+            cb.setColorStroke(ARROW);
+            cb.setLineWidth(9 * k * s);
+            cb.setLineCap(PdfContentByte.LINE_CAP_ROUND);
+            cb.setLineJoin(PdfContentByte.LINE_JOIN_ROUND);
+            cb.moveTo(X(xPx), Y(yPx));
+            cb.lineTo(X(xPx + wPx), Y(yPx));
+            cb.moveTo(X(xPx + wPx - head), Y(yPx - head));
+            cb.lineTo(X(xPx + wPx), Y(yPx));
+            cb.lineTo(X(xPx + wPx - head), Y(yPx + head));
+            cb.stroke();
+            cb.restoreState();
+        }
+
+        void logo(float x1, float y1, float x2, float y2) {
+            Image img = logoImage();
+            if (img == null) {
+                text(f.bold, 70, 0, "SALTER", (x1 + x2) / 2, (y1 + y2) / 2 + 25, Element.ALIGN_CENTER, x2 - x1);
+                return;
+            }
+            try {
+                img.scaleToFit((x2 - x1) * s, (y2 - y1) * s);
+                float cx = X((x1 + x2) / 2), cy = Y((y1 + y2) / 2);
+                img.setAbsolutePosition(cx - img.getScaledWidth() / 2, cy - img.getScaledHeight() / 2);
+                cb.addImage(img);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        }
+
+        void barcode(Guide g, ZoneId zone, float x1, float y1, float x2, float y2) {
+            try {
+                BarcodePDF417 bc = new BarcodePDF417();
+                bc.setText(GuideBarcode.encode(g, zone).getBytes(StandardCharsets.ISO_8859_1));
+                bc.setErrorLevel(5);
+                Image img = bc.getImage();
+                img.scaleAbsolute((x2 - x1) * s, (y2 - y1) * s);
+                img.setAbsolutePosition(X(x1), Y(y2));
+                cb.addImage(img);
+            } catch (Exception e) {
+                text(f.bold, 64, 0, g.getFolio(), (x1 + x2) / 2, (y1 + y2) / 2 + 22, Element.ALIGN_CENTER, x2 - x1);
+            }
         }
     }
 
-    private static Image logo(Layout l) {
+    private static Image logoImage() {
         try (var in = GuidePdfService.class.getResourceAsStream("/branding/salter-guia.png")) {
             if (in == null) return PdfSupport.logo();
-            Image img = Image.getInstance(in.readAllBytes());
-            img.scaleToFit(118 * l.k, 62 * l.k);
-            return img;
+            return Image.getInstance(in.readAllBytes());
         } catch (Exception e) {
             return PdfSupport.logo();
         }
-    }
-
-    // ── 2. Consignatario (teléfono sólo en la versión interna) + fecha, peso, dimensiones ──
-    private PdfPTable consignee(Guide g, Layout l, Variant v) {
-        PdfPTable t = new PdfPTable(new float[]{1.25f, 0.6f, 0.55f});
-        t.setWidthPercentage(100);
-        boolean internal = v == Variant.INTERNA;
-        PdfPCell title = text(spaced("CONSIGNATARIO."), l.caps, Element.ALIGN_LEFT, Rectangle.NO_BORDER);
-        title.setColspan(3);
-        title.setPaddingLeft(28 * l.k);
-        title.setPaddingTop(8 * l.k);
-        title.setPaddingBottom(8 * l.k);
-        t.addCell(title);
-
-        // El consignatario va en AMBAS versiones: es la etiqueta que se pega en el bulto (confirmado por el cliente).
-        String line1 = up(g.getRcptClientCode() == null ? g.getRcptName() : "#" + g.getRcptClientCode() + "  " + g.getRcptName());
-        String line2 = up(Text.join(g.getRcptStreet(), g.getRcptNeighborhood() == null ? null : "COL. " + g.getRcptNeighborhood()));
-        String line3 = up(Text.join(g.getRcptCity(), g.getRcptState(), g.getRcptZip() == null ? null : "C.P. " + g.getRcptZip()));
-        LocalDate date = g.getConfirmedAt() == null ? null : g.getConfirmedAt().atZone(zone).toLocalDate();
-        String[][] rows = {
-                {line1, "FECHA", date == null ? "" : SHORT.format(date)},
-                {line2, "PESO", g.isWeightNotApplicable() ? NOT_APPLICABLE : weight(g.getTotalWeightKg())},
-                {line3, "DIMENSIONES", g.isDimensionsNotApplicable() ? NOT_APPLICABLE : up(g.getDimensions())},
-        };
-        for (String[] r : rows) {
-            t.addCell(text(r[0], l.body, Element.ALIGN_LEFT, Rectangle.NO_BORDER));
-            t.addCell(text(r[1], l.body, Element.ALIGN_RIGHT, Rectangle.NO_BORDER));
-            t.addCell(text(r[2], l.body, Element.ALIGN_RIGHT, Rectangle.NO_BORDER));
-        }
-        if (internal && g.getRcptPhone() != null) {
-            PdfPCell tel = text("TEL. " + g.getRcptPhone(), l.body, Element.ALIGN_LEFT, Rectangle.NO_BORDER);
-            tel.setColspan(3);
-            t.addCell(tel);
-        }
-        return t;
-    }
-
-    // ── 3. Piezas y SUBRUTA (CVA-01) ──
-    private PdfPTable pieces(Guide g, Layout l) {
-        PdfPTable t = new PdfPTable(new float[]{1.25f, 1f});
-        t.setWidthPercentage(100);
-        Phrase p = new Phrase();
-        p.add(new Chunk(g.pieces() + "  ", l.pieceNum));
-        Chunk word = new Chunk(piecesWord(g.pieces()), l.pieceTxt);
-        word.setCharacterSpacing(4 * l.k);
-        p.add(word);
-        PdfPCell left = new PdfPCell(p);
-        left.setBorder(Rectangle.BOTTOM);
-        left.setHorizontalAlignment(Element.ALIGN_CENTER);
-        left.setPaddingBottom(4 * l.k);
-        t.addCell(left);
-        Chunk sub = new Chunk(up(g.getSubRoute()), l.cd);
-        sub.setCharacterSpacing(4 * l.k);
-        PdfPCell right = new PdfPCell(new Phrase(sub));
-        right.setBorder(Rectangle.BOTTOM);
-        right.setHorizontalAlignment(Element.ALIGN_LEFT);
-        right.setVerticalAlignment(Element.ALIGN_TOP);
-        right.setPaddingTop(10 * l.k);
-        t.addCell(right);
-        return t;
-    }
-
-    // ── 4. Código PDF417 ──
-    private PdfPTable barcode(Guide g, Layout l, float width) {
-        PdfPTable t = new PdfPTable(1);
-        t.setWidthPercentage(100);
-        PdfPCell c;
-        try {
-            BarcodePDF417 bc = new BarcodePDF417();
-            bc.setText(GuideBarcode.encode(g, zone).getBytes(StandardCharsets.ISO_8859_1));
-            bc.setErrorLevel(5);
-            Image img = bc.getImage();
-            img.scaleAbsolute(width * 0.9f, 88 * l.k);
-            c = new PdfPCell(img, false);
-        } catch (Exception e) {
-            c = new PdfPCell(new Phrase(g.getFolio(), l.folio));
-        }
-        c.setBorder(Rectangle.NO_BORDER);
-        c.setHorizontalAlignment(Element.ALIGN_CENTER);
-        c.setVerticalAlignment(Element.ALIGN_MIDDLE);
-        c.setPaddingTop(9 * l.k);
-        c.setPaddingBottom(9 * l.k);
-        t.addCell(c);
-        return t;
     }
 
     /** Contenido del PDF417 (ver {@link GuideBarcode}: versionado, sin datos personales, folio primero). */
@@ -346,65 +390,6 @@ public class GuidePdfService {
         return n == 1 ? "PIEZA" : "PIEZAS";
     }
 
-    // ── 5. Folio, servicio y fecha compromiso ──
-    private PdfPTable folioBox(Guide g, Layout l) {
-        PdfPTable t = new PdfPTable(new float[]{1f, 1f});
-        t.setWidthPercentage(100);
-        Chunk f = new Chunk(printedFolio(g.getFolio()), l.folio);
-        f.setCharacterSpacing(5 * l.k);
-        PdfPCell folio = new PdfPCell(new Phrase(f));
-        folio.setColspan(2);
-        folio.setBorder(Rectangle.BOX);
-        folio.setHorizontalAlignment(Element.ALIGN_CENTER);
-        folio.setPaddingTop(3 * l.k);
-        folio.setPaddingBottom(7 * l.k);
-        t.addCell(folio);
-
-        PdfPCell service = text("SERVICIO " + up(g.getServiceType()), l.service, Element.ALIGN_CENTER, Rectangle.LEFT | Rectangle.BOTTOM);
-        service.setVerticalAlignment(Element.ALIGN_MIDDLE);
-        service.setFixedHeight(48 * l.k);
-        service.setPaddingTop(10 * l.k);
-        t.addCell(service);
-
-        PdfPCell commit = new PdfPCell();
-        commit.setBorder(Rectangle.RIGHT | Rectangle.BOTTOM);
-        Paragraph a = new Paragraph("FECHA COMPROMISO", l.service);
-        a.setAlignment(Element.ALIGN_CENTER);
-        commit.addElement(a);
-        Paragraph b = new Paragraph(g.getCommitmentDate() == null ? "" : SHORT.format(g.getCommitmentDate()), l.service);
-        b.setAlignment(Element.ALIGN_CENTER);
-        b.setSpacingBefore(7 * l.k);
-        commit.addElement(b);
-        t.addCell(commit);
-        return t;
-    }
-
-    // ── 6. Nombre y firma de quien recibe ──
-    private PdfPTable signatures(Layout l) {
-        PdfPTable t = new PdfPTable(new float[]{1f, 1f});
-        t.setWidthPercentage(100);
-        for (String s : new String[]{"NOMBRE", "FIRMA"}) {
-            Chunk c = new Chunk(s, l.sign);
-            c.setCharacterSpacing(4 * l.k);
-            PdfPCell cell = new PdfPCell(new Phrase(c));
-            cell.setBorder(Rectangle.TOP);
-            cell.setHorizontalAlignment(Element.ALIGN_CENTER);
-            cell.setPaddingTop(2);
-            t.addCell(cell);
-        }
-        PdfPTable wrap = new PdfPTable(1);
-        wrap.setWidthPercentage(100);
-        PdfPCell space = new PdfPCell();
-        space.setBorder(Rectangle.NO_BORDER);
-        space.setFixedHeight(34 * l.k);
-        wrap.addCell(space);
-        PdfPCell inner = new PdfPCell(t);
-        inner.setBorder(Rectangle.NO_BORDER);
-        inner.setPadding(0);
-        wrap.addCell(inner);
-        return wrap;
-    }
-
     // ── utilidades ──
 
     /** ATM000000001 → "ATM  000000001" (las siglas separadas del consecutivo, como en el boceto). */
@@ -414,39 +399,12 @@ public class GuidePdfService {
         return m.matches() ? m.group(1) + "  " + m.group(2) : folio;
     }
 
-    private static PdfPCell plain(PdfPTable inner) {
-        PdfPCell c = new PdfPCell(inner);
-        c.setBorder(Rectangle.NO_BORDER);
-        c.setPadding(0);
-        return c;
-    }
-
-    private static PdfPCell text(String value, Font font, int align, int border) {
-        PdfPCell c = new PdfPCell(new Phrase(value == null ? "" : value, font));
-        c.setBorder(border);
-        c.setHorizontalAlignment(align);
-        c.setPadding(1.5f);
-        return c;
-    }
-
-    private static String spaced(String s) {
-        return String.join(" ", s.split(""));
-    }
-
     private static String code(String c) {
         return c == null ? "" : c.toUpperCase(Locale.ROOT);
     }
 
     private static String up(String s) {
         return s == null ? "" : s.toUpperCase(Locale.forLanguageTag("es-MX"));
-    }
-
-    private static String nz(String s) {
-        return s == null ? "" : s;
-    }
-
-    private static String ascii(String s) {
-        return Normalizer.normalize(s, Normalizer.Form.NFD).replaceAll("\\p{M}+", "").replace("|", "/");
     }
 
     private static String weight(BigDecimal kg) {

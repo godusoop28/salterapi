@@ -222,7 +222,7 @@ class RutasManifiestosGuiasTest extends IntegrationTestBase {
         assertThat(t).contains("AUTO TODO MEXICANA", "CVA-01", "NO APLICA", "PIEZAS", "8");
         assertThat(t.toUpperCase()).doesNotContain("PUEBLA");
         // La etiqueta del cliente lleva el consignatario y la firma (formato oficial); sólo el teléfono queda fuera
-        assertThat(t.toUpperCase()).contains("C O N S I G N A T A R I O", "AVELAR MORALES", "NICOLAS BRAVO 204", "JOJUTLA", "MORELOS", "FIRMA");
+        assertThat(t.toUpperCase()).contains("CONSIGNATARIO", "AVELAR MORALES", "NICOLAS BRAVO 204", "JOJUTLA", "MORELOS", "FIRMA");
         assertThat(t).doesNotContain("7775550000");
 
         // La versión interna (con teléfono) es sólo para personal operativo
